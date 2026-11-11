@@ -11,3 +11,4 @@ One line for each change, saying why.
 - Add the end-to-end railroad tests on fixture projects (tests/), so every Phase 1 rule is checked through the real launcher: run with python3 -m unittest discover -s tests.
 - Leave branches named like tickets but holding no ticket file alone and list them in status, because the plan says such branches stay for the person.
 - Make next --ticket NN run a failed setup again, read open ASSUMED rows from the worktree's copy of the ticket, and skip tickets next can't act on before deriving them again, so the briefs match what the agent sees and next stays fast.
+- Show leftovers in the text output of next, advance and drop, so a person reading the terminal sees what was left for them.

@@ -440,6 +440,8 @@ def render(result):
                      + (f" ({s['detail']})" if s.get("detail") else ""))
     if result["action"].get("brief"):
         lines += ["", result["action"]["brief"]]
+    for i, l in enumerate(result.get("leftovers") or []):
+        lines.append(f"{'' if i else chr(10)}leftover: {l['kind']} {l['ref']} ({l['reason']})")
     return "\n".join(lines)
 
 
