@@ -35,3 +35,4 @@ One line for each change, saying why.
 - Add the docs pages for the loop, tickets and states, so an agent new to a project learns the railroad from rail docs.
 - Add the docs pages for review, the contract, retries and consult, so the answers an agent owes the rail are written where it looks.
 - Give a fresh retry budget when a person approves a ticket or an amend, as with any other continue, because plan section 10 says a person's act resets it.
+- Add the docs pages for guards, packs, ADRs, environments and working away from the desk, so a project can run Rail day to day from rail docs.

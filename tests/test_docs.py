@@ -63,3 +63,15 @@ class Review(RailTest):
         retries = p.rail("docs", "retries")["text"]
         for text in ("[retry] budget", "rail consult NN", "rail accept NN", "NN-advice.md"):
             self.assertIn(text, retries)
+
+
+class Operations(RailTest):
+    def test_the_operations_pages_are_there(self):
+        p = self.fixture()
+        self.assertIn("rail doctor", p.rail("docs", "guards")["text"])
+        packs = p.rail("docs", "packs")["text"]
+        self.assertIn(".rail/packs/NAME/", packs)
+        self.assertIn("never changes ticket state", packs)
+        self.assertIn("## Decision", p.rail("docs", "adr")["text"])
+        self.assertIn("People keep four acts", p.rail("docs", "environments")["text"])
+        self.assertIn("/loop", p.rail("docs", "away")["text"])
