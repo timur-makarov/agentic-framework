@@ -119,3 +119,34 @@ class Ask(RailTest):
     def test_a_deny_wins_over_an_ask(self):
         p = self.fixture()
         self.assertEqual(decide(p, "sudo git push -f"), "deny")
+
+
+class Wiring(RailTest):
+    def test_init_wires_the_rules_and_the_hook_and_doctor_checks_them(self):
+        p = self.fixture()
+        with open(p.path(".claude", "settings.json")) as f:
+            settings = json.load(f)
+        self.assertIn("Edit(./.rail/journal/**)", settings["permissions"]["deny"])
+        for name in (".env", ".env.local", ".env.production"):
+            for tool in ("Read", "Edit", "Write"):
+                self.assertIn(f"{tool}(./**/{name})", settings["permissions"]["deny"])
+        self.assertNotIn("Read(./**/.env.example)", settings["permissions"]["deny"])
+        self.assertIn("Bash(sudo *)", settings["permissions"]["ask"])
+        self.assertEqual(settings["hooks"]["PreToolUse"][0]["matcher"], "Bash")
+        self.assertIn("rail hook guard", settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"])
+        found = {s["step"]: s for s in p.rail("doctor", expect=None)["steps"]}
+        self.assertEqual((found["hooks"]["result"], found["guard rules"]["result"]), ("pass", "pass"))
+
+        settings["permissions"]["ask"] = []
+        with open(p.path(".claude", "settings.json"), "w") as f:
+            json.dump(settings, f)
+        found = {s["step"]: s for s in p.rail("doctor", expect=3)["steps"]}
+        self.assertIn("Bash(sudo *)", found["guard rules"]["detail"])
+
+        del settings["hooks"]["PreToolUse"]
+        settings["permissions"]["deny"] = []
+        with open(p.path(".claude", "settings.json"), "w") as f:
+            json.dump(settings, f)
+        found = {s["step"]: s for s in p.rail("doctor", expect=3)["steps"]}
+        self.assertIn("guard", found["hooks"]["detail"])
+        self.assertEqual(found["guard rules"]["result"], "fail")

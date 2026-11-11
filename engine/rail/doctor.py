@@ -33,10 +33,20 @@ def checks(project):
             settings = json.load(f)
     except (OSError, ValueError):
         settings = {}
-    wired = json.dumps(settings.get("hooks", {}).get("SessionStart", []))
-    found.append(("hooks", "rail hook session-start" in wired,
-                  "SessionStart runs rail hook session-start" if "rail hook session-start" in wired
-                  else "the SessionStart hook isn't wired in .claude/settings.json: run rail init"))
+    hooks = settings.get("hooks", {})
+    missing = [name for event, name in (("SessionStart", "session-start"), ("PreToolUse", "guard"))
+               if f"rail hook {name}" not in json.dumps(hooks.get(event, []))]
+    found.append(("hooks", not missing, "the session-start and guard hooks are wired" if not missing
+                  else f"not wired in .claude/settings.json: {', '.join(missing)}; run rail init"))
+    permissions = settings.get("permissions", {})
+    expected = [("deny", "Edit(./.rail/journal/**)"), ("deny", "Read(./**/.env)"), ("ask", "Bash(sudo *)")]
+    absent = [rule for kind, rule in expected if rule not in permissions.get(kind, [])]
+    guard_on_bash = any(g.get("matcher") == "Bash" and "rail hook guard" in json.dumps(g)
+                        for g in hooks.get("PreToolUse", []))
+    if not guard_on_bash and "guard" not in missing:
+        absent.append("the guard hook's Bash matcher")
+    found.append(("guard rules", not absent, "the deny and ask rules are in .claude/settings.json" if not absent
+                  else f"missing from .claude/settings.json: {', '.join(absent)}; run rail init"))
 
     agents = os.path.join(root, "AGENTS.md")
     has_section = os.path.exists(agents) and any(l.strip() == "## Rail" for l in open(agents).read().splitlines())

@@ -26,3 +26,4 @@ One line for each change, saying why.
 - Add the guard hook's deny rules for force pushes, pushes to the base branch, --no-verify and merges outside the engine, because these depend on a flag or refspec that permission rules can't match.
 - Deny a download piped into a shell, disk wipes, and Bash commands that touch .env files or write the journal, because only a hook sees these inside a Bash command.
 - Ask the person before sudo, git reset --hard, git clean -f and rm -r outside the worktree, because each is sometimes right and a person should decide.
+- Wire the guard: rail init merges the deny and ask rules and the PreToolUse guard hook into .claude/settings.json, and doctor reports when either is missing, so the guards are on from the first session.
