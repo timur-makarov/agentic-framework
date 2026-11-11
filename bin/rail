@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+"""The rail launcher: runs the engine that sits next to it, in ../engine."""
+import os
+import sys
+
+if sys.version_info < (3, 11):
+    sys.stderr.write("rail needs Python 3.11 or newer (found %d.%d). On macOS: brew install python\n" % sys.version_info[:2])
+    sys.exit(2)
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "engine"))
+from rail.cli import main  # noqa: E402
+
+sys.exit(main())

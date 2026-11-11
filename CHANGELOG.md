@@ -6,3 +6,5 @@ One line for each change, saying why.
 - Record the Phase 0 results in section 25 of the plan, so later phases build on what was checked in a cloud session.
 - Make the ticket ID ref the branch `rail/id/NN` instead of the tag `rail/NN`, because the cloud proxy refuses tag pushes (Phase 0 check 1).
 - Record Phase 0 check 2: the async merge endpoint merged the results PR from the cloud session.
+- Add the Phase 1 engine in Python 3.11 with the standard library only: the first-match table, the verbs add, accept, next, advance, status, context and drop, state derived from git and the journal, claims with their own worktrees, and the local squash merge, so a ticket can run from add to merge on the new core.
+- Add bin/rail, the launcher that runs the engine next to it and stops with one line on Python older than 3.11.

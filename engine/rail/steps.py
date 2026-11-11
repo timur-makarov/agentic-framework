@@ -1,0 +1,267 @@
+"""The steps the engine runs: claim and setup, ship (plan, section 7), the local merge and the PR description."""
+
+import os
+import shutil
+from pathlib import Path
+
+from . import gitx
+from .project import event, events_path, ticket_path
+from .state import raised_tier
+from .ticket import Ticket, lint, rank
+from .util import match_any, run_shell, tail
+
+LOCKFILES = {
+    "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb", "poetry.lock", "uv.lock", "Pipfile.lock",
+    "Cargo.lock", "go.sum", "Gemfile.lock", "composer.lock",
+}
+
+
+class Run:
+    """The receipt of one command: the steps it ran, their events, and the first failure."""
+
+    def __init__(self, project, t):
+        self.project, self.t = project, t
+        self.steps, self.events = [], []
+        self.failure = None  # (step, output)
+        self.rebased = False
+
+    def record(self, step, passed, patch_id=None, detail=None, duration_ms=None, output="", status="ran"):
+        receipt = {"step": step, "status": status}
+        if status == "ran":
+            receipt["result"] = "pass" if passed else "fail"
+            fields = {"step": step, "status": status, "result": receipt["result"]}
+            if patch_id is not None:
+                fields["patch_id"] = patch_id
+            if detail:
+                fields["detail"] = detail
+            if duration_ms is not None:
+                fields["duration_ms"] = duration_ms
+            self.events.append(event(self.t.id, "step", **fields))
+        if detail:
+            receipt["detail"] = detail
+        self.steps.append(receipt)
+        if status == "ran" and not passed and not self.failure:
+            self.failure = (step, output or detail or "")
+        return passed
+
+    def not_run(self, *names):
+        for name in names:
+            self.steps.append({"step": name, "status": "not_run"})
+
+    @property
+    def ok(self):
+        return self.failure is None
+
+
+def run_command(project, t, step, command, run, patch_id=None, label=None):
+    """Run one configured command in the ticket's worktree and record it."""
+    code, output, ms = run_shell(command, t.worktree, {"RAIL_TICKET": t.id}, project.config["commands"]["timeout_secs"])
+    status = "timeout" if code is None else f"exit {code}"
+    detail = (f"{label}: {status}" if code != 0 else label) if label else status
+    return run.record(step, code == 0, patch_id, detail, ms, output=f"$ {command}\n{tail(output)}")
+
+
+# --- claim -----------------------------------------------------------------------
+
+
+def make_worktree(project, t):
+    """Check the ticket branch out in .claude/worktrees/NN, copy .worktreeinclude files, run setup."""
+    path = project.worktree_path(t.id)
+    gitx.git(["worktree", "prune"], project.root)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    gitx.git(["worktree", "add", "--quiet", path, t.branch], project.root)
+    t.worktree = path
+    include = os.path.join(project.root, ".worktreeinclude")
+    if os.path.exists(include):
+        with open(include) as f:
+            patterns = [l.strip() for l in f if l.strip() and not l.startswith("#")]
+        for pattern in patterns:
+            for src in Path(project.root).glob(pattern):
+                if src.is_file():
+                    dest = os.path.join(path, os.path.relpath(src, project.root))
+                    os.makedirs(os.path.dirname(dest), exist_ok=True)
+                    shutil.copy2(src, dest)
+
+
+def setup(project, t, run):
+    command = project.config["commands"]["setup"]
+    if not command:
+        run.not_run("setup")
+        return True
+    return run_command(project, t, "setup", command, run)
+
+
+# --- ship --------------------------------------------------------------------------
+
+
+def ship(project, f, run):
+    """The ship steps, in order, stopping at the first failure. Adds a shipped event when all pass."""
+    t, ref = f.t, f.t.ref
+    wt = t.worktree
+    order = ["ticket-lint", "assumptions", "scope", "migration", "verify", "checks"]
+
+    base_tip = gitx.rev(project.base_ref, project.root)
+    rebased = False
+    if base_tip and not gitx.ok(["merge-base", "--is-ancestor", base_tip, "HEAD"], wt):
+        before = project.patch_id(ref)
+        result = gitx.git(["rebase", "--quiet", base_tip], wt, check=False)
+        if result.returncode != 0:
+            conflicts = gitx.out(["diff", "--name-only", "--diff-filter=U"], wt).splitlines()
+            gitx.git(["rebase", "--abort"], wt, check=False)
+            run.record("rebase", False, before, f"conflict in {', '.join(conflicts) or 'the branch'}",
+                       output=f"Rebasing {t.branch} onto {project.base} conflicts in: {', '.join(conflicts)}.\n"
+                              f"Rebase it yourself in {project.rel(wt)} (git rebase {project.base}), resolve the"
+                              f" conflict, then run: rail advance {t.id}")
+            run.not_run(*order)
+            return run
+        rebased = True
+        run.record("rebase", True, project.patch_id(ref), f"onto {project.base}")
+
+    patch_id = project.patch_id(ref)
+    text = gitx.read_blobs([f"{ref}:{ticket_path(t.id)}"], project.root)[f"{ref}:{ticket_path(t.id)}"]
+    ticket = Ticket(text or "")
+    errors = lint(ticket, expect_id=t.id)
+    if not run.record("ticket-lint", not errors, patch_id, "; ".join(errors) or None, output="\n".join(errors)):
+        run.not_run(*order[1:])
+        return run
+
+    open_rows = ticket.open_assumptions()
+    if not run.record("assumptions", not open_rows, patch_id, f"{len(open_rows)} open" if open_rows else None,
+                      output="Open ASSUMED rows:\n" + "\n".join(f"- {r}" for r in open_rows)):
+        run.not_run(*order[2:])
+        return run
+
+    changed = project.changed_files(ref)
+    outside = [p for p in changed if not match_any(ticket.scope, p)]
+    if not run.record("scope", not outside, patch_id, f"outside scope: {', '.join(outside)}" if outside else None,
+                      output=f"These files are outside scope_paths ({', '.join(ticket.scope)}):\n" + "\n".join(outside)):
+        run.not_run(*order[3:])
+        return run
+
+    tier = f.tier
+    needed, reason = raised_tier(project, changed)
+    if rank(needed) > rank(tier):
+        hits = [p for p in changed if match_any(project.config["risk_paths"].get(needed, []) +
+                                                (project.config["migration_paths"] if needed == "HIGH" else []), p)]
+        run.events.append(event(t.id, "tier_raised", **{"from": tier, "to": needed, "reason": reason,
+                                                        "detail": ", ".join(hits[:5])}))
+        tier = needed
+
+    migrations = [p for p in changed if match_any(project.config["migration_paths"], p)]
+    if migrations:
+        missing = [k for k in ("reversibility", "rollback") if not ticket.get(k)]
+        if not run.record("migration", not missing, patch_id, f"missing {', '.join(missing)}" if missing else None,
+                          output=f"This ticket changes migrations ({', '.join(migrations)}). Set {' and '.join(missing)}"
+                                 " in the front matter: expand then contract, write the down step, test the rollback."):
+            run.not_run(*order[4:])
+            return run
+
+    verify = project.config["commands"]["verify"]
+    if verify:
+        if not run_command(project, t, "verify", verify, run, patch_id):
+            run.not_run("checks")
+            return run
+    else:
+        run.not_run("verify")
+
+    for command in ticket.checks():
+        if not run_command(project, t, "checks", command, run, patch_id, label=command):
+            return run
+
+    head = gitx.rev(ref, project.root)
+    run.events.append(event(t.id, "shipped", patch_id=patch_id, head=head[:12], tier=tier, size=project.size(ref)))
+    run.rebased = rebased
+    return run
+
+
+def ship_failed_brief(t, run):
+    step, output = run.failure
+    return f"Ship of ticket {t.id} failed at '{step}'.\n{output}\n\nFix it in the worktree, then run: rail advance {t.id}"
+
+
+# --- merge -------------------------------------------------------------------------
+
+
+def describe(project, t, ticket, tier):
+    """The PR title and description (plan, section 9). Locally they are the squash commit's subject and body."""
+    title = ticket.title.strip()
+    subject = f"{t.id}: {title[:1].lower()}{title[1:]}"
+    run_events = []
+    for e in reversed(t.events):
+        if e.get("event") == "shipped" and not run_events:
+            run_events.append(e)
+        elif run_events and e.get("event") in ("step", "tier_raised"):
+            run_events.append(e)
+        elif run_events:
+            break
+    rows = []
+    for e in reversed(run_events):
+        if e.get("event") != "step":
+            continue
+        name = f"check: {e.get('detail')}" if e.get("step") == "checks" else e.get("step")
+        rows.append(f"| {name} | {e.get('status')}, {e.get('result')} |")
+    changed = project.changed_files(t.ref)
+    lockfiles = [p for p in changed if os.path.basename(p) in LOCKFILES]
+    migrations = "No migrations." if not ticket.get("reversibility") else (
+        f"Migrations: {ticket.get('reversibility')}; rollback: {ticket.get('rollback')}.")
+    risk = (f"{tier}. Touches {', '.join(ticket.scope)}. {migrations} "
+            f"Changed lockfiles: {', '.join(lockfiles) or 'none'}.")
+    body = [
+        "## Why", f"{ticket.sections.get('Why', '')} (ticket {t.id})", "",
+        "## Look at", ticket.sections.get("Look at") or "(not written)", "",
+        "## Evidence", "| Step | Status |", "|---|---|", *rows, "",
+        "## Risk", risk, "",
+        f"Ticket: {t.id}", f"Tier: {tier}",
+    ]
+    external = ticket.get("external_id", "")
+    if external.startswith("github#"):
+        body.append(f"Closes #{external.split('#', 1)[1]}")
+    return subject, "\n".join(body)
+
+
+def merge_local(project, f, run):
+    """Squash-merge a shipped ticket into the base branch, with no remote (plan, section 6: Offline)."""
+    t = f.t
+    base_ref = f"refs/heads/{project.base}"
+    base_tip = gitx.rev(base_ref, project.root)
+    ticket = Ticket(gitx.read_blobs([f"{t.ref}:{ticket_path(t.id)}"], project.root)[f"{t.ref}:{ticket_path(t.id)}"])
+    subject, body = describe(project, t, ticket, f.tier)
+    tree = gitx.out(["rev-parse", f"{t.ref}^{{tree}}"], project.root)
+    commit = gitx.out(["commit-tree", tree, "-p", base_tip, "-m", subject, "-m", body], project.root)
+    base_wt = gitx.worktrees(project.root).get(project.base)
+    if base_wt:
+        result = gitx.git(["merge", "--quiet", "--ff-only", commit], base_wt, check=False)
+        moved = result.returncode == 0
+        why = (result.stderr or result.stdout).strip()
+    else:
+        moved = gitx.update_ref(project.root, base_ref, commit, base_tip)
+        why = f"{project.base} moved during the merge"
+    detail = f"squash {commit[:12]} onto {project.base}" if moved else why
+    run.record("merge", moved, f.patch_id, detail if moved else f"not merged: {why}", output=why)
+    return commit if moved else None
+
+
+def remove_ticket(project, t):
+    """Remove a finished ticket's worktree and branches. Returns the leftovers it couldn't remove."""
+    leftovers = []
+    if t.worktree:
+        changes = gitx.dirty(t.worktree)
+        if changes:
+            leftovers.append({"kind": "worktree", "ref": project.rel(t.worktree),
+                              "reason": f"uncommitted changes ({len(changes)} files); left for you"})
+        elif gitx.git(["worktree", "remove", "--force", t.worktree], project.root, check=False).returncode == 0:
+            t.worktree = None
+        else:
+            leftovers.append({"kind": "worktree", "ref": project.rel(t.worktree), "reason": "git refused to remove it"})
+    if t.branch and not t.worktree:
+        if gitx.git(["branch", "-D", t.branch], project.root, check=False).returncode == 0:
+            t.branch = None
+        else:
+            leftovers.append({"kind": "branch", "ref": t.branch, "reason": "git refused to delete it"})
+    if t.remote_branch and project.remote:
+        result = gitx.push(project.root, project.remote, f":refs/heads/{t.remote_branch}") if project.online else "unavailable"
+        if result == "ok":
+            t.remote_branch = None
+        else:
+            leftovers.append({"kind": "remote branch", "ref": t.remote_branch, "reason": "deletion refused here"})
+    return leftovers
