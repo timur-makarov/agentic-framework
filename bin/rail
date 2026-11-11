@@ -1,13 +1,47 @@
 #!/usr/bin/env python3
-"""The rail launcher: runs the engine that sits next to it, in ../engine."""
+"""The rail launcher that install puts on PATH.
+
+Inside a project it hands over to the project's own .rail/bin/rail, so the project's changes to its engine take
+effect. Outside a project it offers only init, which sets one up from this framework.
+"""
+import json
 import os
+import subprocess
 import sys
 
 if sys.version_info < (3, 11):
     sys.stderr.write("rail needs Python 3.11 or newer (found %d.%d). On macOS: brew install python\n" % sys.version_info[:2])
     sys.exit(2)
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "engine"))
-from rail.cli import main  # noqa: E402
+FRAMEWORK = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+args = sys.argv[1:]
 
-sys.exit(main())
+
+def project_root():
+    common = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                            capture_output=True, text=True)
+    if common.returncode != 0:
+        return None
+    path = common.stdout.strip()
+    if os.path.basename(path) == ".git":
+        return os.path.dirname(path)
+    top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    return top.stdout.strip() or None
+
+
+if args[:1] == ["init"]:
+    sys.path.insert(0, os.path.join(FRAMEWORK, "engine"))
+    from rail.cli import main  # noqa: E402
+    sys.exit(main(args))
+
+root = project_root()
+launcher = os.path.join(root, ".rail", "bin", "rail") if root else None
+if launcher and os.path.exists(launcher):
+    os.execv(sys.executable, [sys.executable, launcher, *args])
+
+message = "not inside a Rail project: run rail init in your project's repository"
+if "--json" in args:
+    print(json.dumps({"schema_version": 1, "ok": False, "reason": {"code": "NOT_A_PROJECT", "message": message}}, indent=2))
+else:
+    print(f"rail: {message}")
+sys.exit(2)

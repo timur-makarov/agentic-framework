@@ -9,14 +9,14 @@ import os
 import re
 import sys
 
-from . import areas, gitx, steps
+from . import areas, gitx, hooks, steps
 from .project import Project, event, events_path, ticket_path
 from .state import OPEN, derive, floor
 from .table import TRANSITIONS, first_match
-from .ticket import Ticket, branch_name, highest, lint, with_id
+from .ticket import Ticket, branch_name, highest, lint, rank, with_id
 from .util import RailError, age, match_any
 
-VERBS = ("add", "accept", "next", "advance", "status", "context", "drop")
+VERBS = ("init", "add", "accept", "next", "advance", "status", "context", "drop", "doctor", "ci")
 STALE_DAYS = 3
 
 
@@ -223,6 +223,9 @@ def cmd_accept(project, args):
 
 def cmd_next(project, args):
     project.sync()
+    task = init_task(project)
+    if task:
+        return task
     tickets, facts = load(project)
     leftovers = cleanup(project, tickets, facts)
     explicit = requested(project, args)
@@ -411,6 +414,90 @@ def cmd_drop(project, args):
     return from_facts(facts[f.id], receipts, leftovers=leftovers)
 
 
+def cmd_init(args):
+    from . import init
+
+    root, receipts = init.init(os.getcwd())
+    project = Project(root)
+    repo = None
+    if project.remote:
+        from . import forge
+        repo = forge.github_repo(project)
+        if repo:
+            try:
+                created = forge.create_labels(repo)
+                receipts.append({"step": "labels", "status": "ran", "result": "pass",
+                                 "detail": f"created {', '.join(created)}" if created else "all three exist"})
+            except forge.ForgeError as e:
+                receipts.append({"step": "labels", "status": "unavailable", "detail": str(e)})
+    brief = ("Rail is installed. Next: rail next, which returns the init task: setup and verify, ## Areas, risk_paths,"
+             " rules and .worktreeinclude, for the person to confirm.")
+    return answer(code="INITIALISED", owner="agent", action={"kind": "script", "brief": brief, "command": "rail next"},
+                  steps_=receipts, root=root)
+
+
+def init_task(project):
+    """The first `rail next` returns the init task until the project's config is on the base branch (plan, section 14)."""
+    if gitx.read_blobs([f"{project.base_ref}:.rail/config.toml"], project.root).get(f"{project.base_ref}:.rail/config.toml"):
+        return None
+    from .init import INIT_TASK
+    brief = INIT_TASK.format(base=project.base, depth=project.config["map"]["depth"])
+    return answer(owner="agent", code="INIT_TASK", action={"kind": "agent_task", "brief": brief}, cwd=".")
+
+
+def cmd_doctor(project, args):
+    from . import doctor
+
+    found = doctor.checks(project)
+    missing = [f"- {name}: {detail}" for name, passed, detail in found if passed is False]
+    brief = "Everything Rail needs is in place." if not missing else "Fix these:\n" + "\n".join(missing)
+    return answer(code="DOCTOR", action={"kind": "rest" if not missing else "human_wait", "brief": brief},
+                  owner="none" if not missing else "human", steps_=doctor.as_steps(found))
+
+
+def cmd_ci(project, args):
+    """The `rail` check: the ship checks again, on the PR head (plan, section 11). It writes nothing."""
+    from .state import raised_tier
+
+    head = "HEAD"
+    branch = os.environ.get("RAIL_BRANCH") or gitx.git(["rev-parse", "--abbrev-ref", "HEAD"], project.root).stdout.strip()
+    m = re.match(r"^(\d+)-", branch)
+    nn = m.group(1) if m else None
+    text = gitx.read_blobs([f"{head}:{ticket_path(nn)}"], project.root).get(f"{head}:{ticket_path(nn)}") if nn else None
+    run = steps.Run(project, type("T", (), {"id": nn or ""})())
+    changed = project.changed_files(head)
+    if text is None:
+        # A PR with no ticket: the rail init PR, Dependabot, a person's own PR.
+        tier, _ = raised_tier(project, changed)
+        verify = project.config["commands"]["verify"]
+        if project.config["commands"]["setup"]:
+            steps.run_command(project, project.root, "", "setup", project.config["commands"]["setup"], run)
+        if run.ok and verify:
+            steps.run_command(project, project.root, "", "verify", verify, run)
+        elif not verify:
+            run.not_run("verify")
+        brief = f"No ticket on branch {branch}. Its paths would make it {tier}."
+        return answer(code="CI_NO_TICKET", action={"kind": "rest", "brief": brief}, steps_=run.steps, tier=tier)
+
+    from .project import parse_events
+    events = parse_events(gitx.read_blobs([f"{head}:{events_path(nn)}"], project.root).get(f"{head}:{events_path(nn)}"))
+    patch_id = project.patch_id(head)
+    shipped = [e for e in events if e.get("event") == "shipped" and e.get("patch_id") == patch_id]
+    if not run.record("shipped", bool(shipped), patch_id, None if shipped else "not shipped yet",
+                      output="The ticket hasn't shipped this patch: run rail advance in its worktree."):
+        return answer(nn, code="CI_FAIL", action={"kind": "rest", "brief": "not shipped yet"}, steps_=run.steps)
+    if project.config["commands"]["setup"]:
+        steps.run_command(project, project.root, nn, "setup", project.config["commands"]["setup"], run)
+    tier = shipped[-1].get("tier", "LOW")
+    if run.ok:
+        needed = steps.check(project, nn, Ticket(text), head, project.root, tier, run, patch_id)
+        if needed is not None and rank(needed) > rank(tier):
+            run.record("tier", False, patch_id, f"the change needs {needed}, and it shipped as {tier}")
+    code = "CI_PASS" if run.ok else "CI_FAIL"
+    brief = "Every check passed." if run.ok else f"Failed at '{run.failure[0]}':\n{run.failure[1]}"
+    return answer(nn, code=code, action={"kind": "rest", "brief": brief}, steps_=run.steps, tier=tier)
+
+
 # --- output ----------------------------------------------------------------------------
 
 
@@ -473,6 +560,11 @@ def parser():
     drop = verb("drop", "end a ticket without merging it")
     drop.add_argument("--reason", default="")
     drop.add_argument("--by", choices=("agent", "person"), default="agent")
+    verb("init", "set this project up for Rail", ticket=False)
+    verb("doctor", "check the setup and print what's missing", ticket=False)
+    verb("ci", "the rail check: the ship checks again on a pull request's head", ticket=False)
+    hook = sub.add_parser("hook")  # internal: Claude Code hooks call it; not a verb
+    hook.add_argument("name", choices=sorted(hooks.HOOKS))
     return p
 
 
@@ -483,8 +575,12 @@ def main(argv=None):
         args = parser().parse_args(argv)
         if getattr(args, "ticket_opt", None):
             args.ticket = args.ticket_opt
-        project = Project(os.getcwd())
-        result = globals()[f"cmd_{args.verb}"](project, args)
+        if args.verb == "hook":
+            return hooks.run(args.name)
+        if args.verb == "init":
+            result = cmd_init(args)
+        else:
+            result = globals()[f"cmd_{args.verb}"](Project(os.getcwd()), args)
         code = 3 if any(s.get("result") == "fail" for s in result.get("steps", [])) else 0
     except RailError as e:
         result = {"schema_version": 1, "ok": False, "reason": {"code": e.code, "message": str(e)}}

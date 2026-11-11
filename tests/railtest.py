@@ -41,9 +41,12 @@ def ticket(title="Fix add", tier="LOW", scope=("src/**",), check=CHECK_ADD, fron
 
 
 class Fixture:
-    """A git project with Rail's config and a tiny calculator, optionally cloned from a bare remote."""
+    """A git project set up with `rail init`, with a test config and a tiny calculator.
 
-    def __init__(self, root, config=CONFIG, files=None, remote=None):
+    With `remote`, it is a clone of that bare repository instead.
+    """
+
+    def __init__(self, root, config=CONFIG, files=None, remote=None, init=True):
         self.root = root
         if remote:
             self.git("clone", "--quiet", remote, root, cwd=os.path.dirname(root))
@@ -51,7 +54,6 @@ class Fixture:
         os.makedirs(root)
         self.git("init", "--quiet", "-b", "main")
         defaults = {
-            ".rail/config.toml": config,
             ".gitignore": ".claude/worktrees/\n__pycache__/\n",
             "ARCHITECTURE.md": ARCHITECTURE,
             "src/calc.py": "def add(a, b):\n    return a - b\n",
@@ -60,6 +62,10 @@ class Fixture:
         defaults.update(files or {})
         for path, text in defaults.items():
             self.write(path, text)
+        if not init:
+            return
+        self.rail("init")
+        self.write(".rail/config.toml", config)
         self.git("add", "-A")
         self.git("commit", "--quiet", "-m", "init")
 

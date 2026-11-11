@@ -1,0 +1,12 @@
+#!/bin/sh
+# Puts rail on PATH: a link in ~/.local/bin to this framework's launcher. There is no package.
+set -e
+here=$(cd "$(dirname "$0")" && pwd)
+mkdir -p "$HOME/.local/bin"
+ln -sf "$here/bin/rail" "$HOME/.local/bin/rail"
+echo "Linked $HOME/.local/bin/rail -> $here/bin/rail"
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) echo "Next: cd /path/to/project && rail init" ;;
+  *) echo "Add this line to your shell profile, then open a new shell:"
+     echo '  export PATH="$HOME/.local/bin:$PATH"' ;;
+esac

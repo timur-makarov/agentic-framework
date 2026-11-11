@@ -1,0 +1,30 @@
+# Rail's project policy. Every field names its reader. `rail docs config` explains each one.
+# Top-level keys come first: in TOML, a key below a [table] header belongs to that table.
+
+base_branch = "main"                      # reader: claim, ship, CI, merge
+auto_tiers = ["LOW", "MEDIUM"]            # accepted and merged with no person; other tiers get a contract PR and a person's merge
+migration_paths = ["**/migrations/**"]    # a HIGH floor; tickets touching them need reversibility and rollback
+
+[commands]
+setup = ""                                # reader: claim (after each worktree is made) and CI
+verify = ""                               # reader: ship and CI. The whole project: tests, lint, a secret scan, a dependency scan
+timeout_secs = 900                        # reader: every command run: setup, verify, each check, each review run
+
+[risk_paths]                              # reader: add (floors matched against scope_paths) and ship (changed files)
+HIGH = [".rail/bin/**", ".rail/engine/**", ".rail/config.toml", ".claude/**", ".github/workflows/**"]
+MEDIUM = []
+
+[size]                                    # reader: ship and CI; changed lines, generated files and lockfiles excluded
+LOW = 300
+MEDIUM = 600
+exclude = []
+
+[retry]
+budget = 2                                # reader: next and advance; attempts per step, then consult, then a person
+
+[sweep]
+after = 20                                # reader: next; LOW tickets and ticketless commits since the last sweep
+
+[map]
+depth = 1                                 # reader: doc-lint; the directory depth ## Areas must cover
+ignore = []

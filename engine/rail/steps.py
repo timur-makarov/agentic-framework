@@ -53,9 +53,9 @@ class Run:
         return self.failure is None
 
 
-def run_command(project, t, step, command, run, patch_id=None, label=None):
-    """Run one configured command in the ticket's worktree and record it."""
-    code, output, ms = run_shell(command, t.worktree, {"RAIL_TICKET": t.id}, project.config["commands"]["timeout_secs"])
+def run_command(project, cwd, nn, step, command, run, patch_id=None, label=None):
+    """Run one configured command in `cwd` and record it."""
+    code, output, ms = run_shell(command, cwd, {"RAIL_TICKET": nn}, project.config["commands"]["timeout_secs"])
     status = "timeout" if code is None else f"exit {code}"
     detail = (f"{label}: {status}" if code != 0 else label) if label else status
     return run.record(step, code == 0, patch_id, detail, ms, output=f"$ {command}\n{tail(output)}")
@@ -65,7 +65,7 @@ def run_command(project, t, step, command, run, patch_id=None, label=None):
 
 
 def make_worktree(project, t):
-    """Check the ticket branch out in .claude/worktrees/NN, copy .worktreeinclude files, run setup."""
+    """Check the ticket branch out in .claude/worktrees/NN and copy the files .worktreeinclude lists."""
     path = project.worktree_path(t.id)
     gitx.git(["worktree", "prune"], project.root)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -83,25 +83,78 @@ def make_worktree(project, t):
                     shutil.copy2(src, dest)
 
 
-def setup(project, t, run):
+def setup(project, t, run, cwd=None):
     command = project.config["commands"]["setup"]
     if not command:
         run.not_run("setup")
         return True
-    return run_command(project, t, "setup", command, run)
+    return run_command(project, cwd or t.worktree, t.id, "setup", command, run)
 
 
-# --- ship --------------------------------------------------------------------------
+# --- ship and CI -------------------------------------------------------------------
+
+CHECKS = ["ticket-lint", "assumptions", "scope", "migration", "verify", "checks"]
+
+
+def _stop(run, step):
+    run.not_run(*CHECKS[CHECKS.index(step) + 1:])
+    return None
+
+
+def check(project, nn, ticket, ref, cwd, tier, run, patch_id):
+    """The checks ship and CI share, in order, stopping at the first failure.
+
+    Returns the tier the change needs (it may rise), or None when a check failed.
+    """
+    errors = lint(ticket, expect_id=nn)
+    if not run.record("ticket-lint", not errors, patch_id, "; ".join(errors) or None, output="\n".join(errors)):
+        return _stop(run, "ticket-lint")
+
+    open_rows = ticket.open_assumptions()
+    if not run.record("assumptions", not open_rows, patch_id, f"{len(open_rows)} open" if open_rows else None,
+                      output="Open ASSUMED rows:\n" + "\n".join(f"- {r}" for r in open_rows)):
+        return _stop(run, "assumptions")
+
+    changed = project.changed_files(ref)
+    outside = [p for p in changed if not match_any(ticket.scope, p)]
+    if not run.record("scope", not outside, patch_id, f"outside scope: {', '.join(outside)}" if outside else None,
+                      output=f"These files are outside scope_paths ({', '.join(ticket.scope)}):\n" + "\n".join(outside)):
+        return _stop(run, "scope")
+
+    needed, reason = raised_tier(project, changed)
+    if rank(needed) > rank(tier):
+        globs = project.config["risk_paths"].get(needed, []) + (project.config["migration_paths"] if needed == "HIGH" else [])
+        hits = [p for p in changed if match_any(globs, p)]
+        run.events.append(event(nn, "tier_raised", **{"from": tier, "to": needed, "reason": reason,
+                                                     "detail": ", ".join(hits[:5])}))
+        tier = needed
+
+    migrations = [p for p in changed if match_any(project.config["migration_paths"], p)]
+    if migrations:
+        missing = [k for k in ("reversibility", "rollback") if not ticket.get(k)]
+        if not run.record("migration", not missing, patch_id, f"missing {', '.join(missing)}" if missing else None,
+                          output=f"This ticket changes migrations ({', '.join(migrations)}). Set {' and '.join(missing)}"
+                                 " in the front matter: expand then contract, write the down step, test the rollback."):
+            return _stop(run, "migration")
+
+    verify = project.config["commands"]["verify"]
+    if verify:
+        if not run_command(project, cwd, nn, "verify", verify, run, patch_id):
+            return _stop(run, "verify")
+    else:
+        run.not_run("verify")
+
+    for command in ticket.checks():
+        if not run_command(project, cwd, nn, "checks", command, run, patch_id, label=command):
+            return None
+    return tier
 
 
 def ship(project, f, run):
-    """The ship steps, in order, stopping at the first failure. Adds a shipped event when all pass."""
+    """Rebase onto a moved base, run the checks, and add a shipped event when all pass."""
     t, ref = f.t, f.t.ref
     wt = t.worktree
-    order = ["ticket-lint", "assumptions", "scope", "migration", "verify", "checks"]
-
     base_tip = gitx.rev(project.base_ref, project.root)
-    rebased = False
     if base_tip and not gitx.ok(["merge-base", "--is-ancestor", base_tip, "HEAD"], wt):
         before = project.patch_id(ref)
         result = gitx.git(["rebase", "--quiet", base_tip], wt, check=False)
@@ -112,65 +165,18 @@ def ship(project, f, run):
                        output=f"Rebasing {t.branch} onto {project.base} conflicts in: {', '.join(conflicts)}.\n"
                               f"Rebase it yourself in {project.rel(wt)} (git rebase {project.base}), resolve the"
                               f" conflict, then run: rail advance {t.id}")
-            run.not_run(*order)
+            run.not_run(*CHECKS)
             return run
-        rebased = True
+        run.rebased = True
         run.record("rebase", True, project.patch_id(ref), f"onto {project.base}")
 
     patch_id = project.patch_id(ref)
     text = gitx.read_blobs([f"{ref}:{ticket_path(t.id)}"], project.root)[f"{ref}:{ticket_path(t.id)}"]
-    ticket = Ticket(text or "")
-    errors = lint(ticket, expect_id=t.id)
-    if not run.record("ticket-lint", not errors, patch_id, "; ".join(errors) or None, output="\n".join(errors)):
-        run.not_run(*order[1:])
+    tier = check(project, t.id, Ticket(text or ""), ref, wt, f.tier, run, patch_id)
+    if tier is None:
         return run
-
-    open_rows = ticket.open_assumptions()
-    if not run.record("assumptions", not open_rows, patch_id, f"{len(open_rows)} open" if open_rows else None,
-                      output="Open ASSUMED rows:\n" + "\n".join(f"- {r}" for r in open_rows)):
-        run.not_run(*order[2:])
-        return run
-
-    changed = project.changed_files(ref)
-    outside = [p for p in changed if not match_any(ticket.scope, p)]
-    if not run.record("scope", not outside, patch_id, f"outside scope: {', '.join(outside)}" if outside else None,
-                      output=f"These files are outside scope_paths ({', '.join(ticket.scope)}):\n" + "\n".join(outside)):
-        run.not_run(*order[3:])
-        return run
-
-    tier = f.tier
-    needed, reason = raised_tier(project, changed)
-    if rank(needed) > rank(tier):
-        hits = [p for p in changed if match_any(project.config["risk_paths"].get(needed, []) +
-                                                (project.config["migration_paths"] if needed == "HIGH" else []), p)]
-        run.events.append(event(t.id, "tier_raised", **{"from": tier, "to": needed, "reason": reason,
-                                                        "detail": ", ".join(hits[:5])}))
-        tier = needed
-
-    migrations = [p for p in changed if match_any(project.config["migration_paths"], p)]
-    if migrations:
-        missing = [k for k in ("reversibility", "rollback") if not ticket.get(k)]
-        if not run.record("migration", not missing, patch_id, f"missing {', '.join(missing)}" if missing else None,
-                          output=f"This ticket changes migrations ({', '.join(migrations)}). Set {' and '.join(missing)}"
-                                 " in the front matter: expand then contract, write the down step, test the rollback."):
-            run.not_run(*order[4:])
-            return run
-
-    verify = project.config["commands"]["verify"]
-    if verify:
-        if not run_command(project, t, "verify", verify, run, patch_id):
-            run.not_run("checks")
-            return run
-    else:
-        run.not_run("verify")
-
-    for command in ticket.checks():
-        if not run_command(project, t, "checks", command, run, patch_id, label=command):
-            return run
-
     head = gitx.rev(ref, project.root)
     run.events.append(event(t.id, "shipped", patch_id=patch_id, head=head[:12], tier=tier, size=project.size(ref)))
-    run.rebased = rebased
     return run
 
 
