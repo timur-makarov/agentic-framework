@@ -167,7 +167,7 @@ def check(project, nn, ticket, ref, cwd, tier, run, patch_id, accepted=None):
     if gitx.read_blobs([f"{ref}:ARCHITECTURE.md"], project.root).get(f"{ref}:ARCHITECTURE.md") is None:
         run.not_run("doc-lint")
     else:
-        problems = doclint.areas(project, ref)
+        problems = doclint.lint(project, ref)
         if not run.record("doc-lint", not problems, patch_id, f"{len(problems)} problems" if problems else None,
                           output="ARCHITECTURE.md:\n" + "\n".join(f"- {p}" for p in problems)):
             return _stop(run, "doc-lint")

@@ -28,3 +28,4 @@ One line for each change, saying why.
 - Ask the person before sudo, git reset --hard, git clean -f and rm -r outside the worktree, because each is sometimes right and a person should decide.
 - Wire the guard: rail init merges the deny and ask rules and the PreToolUse guard hook into .claude/settings.json, and doctor reports when either is missing, so the guards are on from the first session.
 - Add doc-lint for ## Areas at ship and in CI: every glob matches a tracked file, every directory at [map] depth is covered, and ARCHITECTURE.md stays under 150 lines, so the repo map can't drift from the tree.
+- Make doc-lint check that links and headings in ARCHITECTURE.md and AGENTS.md resolve, and that a change adding or removing a top-level directory updates ARCHITECTURE.md, so the docs keep pointing at what exists.
