@@ -197,10 +197,30 @@ class Project:
 
     # --- writing ---------------------------------------------------------------
 
+    def _lease_note(self, branch):
+        return os.path.join(self.common, "rail", "cache", "leases", branch.replace("/", "%"))
+
+    def note_rewrite(self, branch):
+        """Before the engine rewrites a pushed ticket branch (a rebase), note the remote tip it replaces. Pushes use
+        it as their lease until one succeeds, so a rewrite made offline still reaches the remote later."""
+        tip = gitx.rev(f"refs/remotes/{self.remote}/{branch}", self.root) if self.remote else None
+        path = self._lease_note(branch)
+        if tip and not os.path.exists(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(tip)
+
     def push_branch(self, branch, lease=None):
         if not self.remote or not self.online:
             return "unavailable"
-        return gitx.push(self.root, self.remote, f"refs/heads/{branch}:refs/heads/{branch}", lease)
+        note = self._lease_note(branch)
+        if lease is None and os.path.exists(note):
+            with open(note) as f:
+                lease = f"{branch}:{f.read().strip()}"
+        result = gitx.push(self.root, self.remote, f"refs/heads/{branch}:refs/heads/{branch}", lease)
+        if result == "ok" and os.path.exists(note):
+            os.remove(note)
+        return result
 
     def append_events(self, t, events, message, lease=None, files=None):
         """Commit events (and whole journal files such as NN-review.json) to the ticket branch, without touching any

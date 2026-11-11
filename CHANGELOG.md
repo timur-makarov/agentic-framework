@@ -29,3 +29,4 @@ One line for each change, saying why.
 - Wire the guard: rail init merges the deny and ask rules and the PreToolUse guard hook into .claude/settings.json, and doctor reports when either is missing, so the guards are on from the first session.
 - Add doc-lint for ## Areas at ship and in CI: every glob matches a tracked file, every directory at [map] depth is covered, and ARCHITECTURE.md stays under 150 lines, so the repo map can't drift from the tree.
 - Make doc-lint check that links and headings in ARCHITECTURE.md and AGENTS.md resolve, and that a change adding or removing a top-level directory updates ARCHITECTURE.md, so the docs keep pointing at what exists.
+- Start a claimed ticket from the current base branch, because a branch made at add misses work merged since, such as the ticket it comes after.

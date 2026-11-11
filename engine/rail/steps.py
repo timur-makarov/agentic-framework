@@ -192,6 +192,7 @@ def ship(project, f, run):
     base_tip = gitx.rev(project.base_ref, project.root)
     if base_tip and not gitx.ok(["merge-base", "--is-ancestor", base_tip, "HEAD"], wt):
         before = project.patch_id(ref)
+        project.note_rewrite(t.branch)
         result = gitx.git(["rebase", "--quiet", base_tip], wt, check=False)
         if result.returncode != 0:
             conflicts = gitx.out(["diff", "--name-only", "--diff-filter=U"], wt).splitlines()

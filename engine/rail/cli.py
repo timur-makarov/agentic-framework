@@ -99,10 +99,18 @@ def claim(project, t, takeover=False):
     return False
 
 
-def make_ready(project, t, run):
-    """A worktree for the ticket, with setup run in it."""
+def make_ready(project, t, run, fresh=False):
+    """A worktree for the ticket, with setup run in it. A fresh claim starts from the current base branch: the
+    branch holds only the ticket and its journal, so the rebase is clean, and an `after` ticket's merged work is
+    there from the start."""
     if not t.worktree:
         steps.make_worktree(project, t)
+        base_tip = gitx.rev(project.base_ref, project.root)
+        if fresh and base_tip and not gitx.ok(["merge-base", "--is-ancestor", base_tip, "HEAD"], t.worktree):
+            project.note_rewrite(t.branch)
+            gitx.git(["rebase", "--quiet", base_tip], t.worktree)
+            if project.remote:
+                project.push_branch(t.branch)
         steps.setup(project, t, run)
         if run.events:
             project.append_events(t, run.events, "setup")
@@ -125,7 +133,7 @@ def transition(project, f, code):
     elif code == "CLAIM":
         if not claim(project, t):
             return False, run
-        make_ready(project, t, run)
+        make_ready(project, t, run, fresh=True)
     elif code == "RESUME":
         ensure_local(project, t)
         if f.claimed_elsewhere and not claim(project, t, takeover=True):
@@ -419,11 +427,7 @@ def commit(project, f, run, message):
     """Commit a run's events and journal files to the ticket branch, and push."""
     t = f.t
     if run.events or run.files:
-        lease = None
-        if run.rebased and t.remote_branch:
-            # A rebased branch replaces the pushed one; the lease makes sure nobody else pushed meanwhile.
-            lease = f"{t.branch}:{gitx.rev(f'refs/remotes/{project.remote}/{t.remote_branch}', project.root)}"
-        project.append_events(t, run.events, message, lease=lease, files=run.files)
+        project.append_events(t, run.events, message, files=run.files)
         run.events, run.files, run.rebased = [], {}, False
     elif project.remote:
         project.push_branch(t.branch)

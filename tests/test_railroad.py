@@ -258,6 +258,18 @@ class Parallel(RailTest):
         nxt = p.rail("next", session="b")
         self.assertEqual((nxt["ticket"], nxt["state"]), ("2", "implementing"))
 
+    def test_a_claim_starts_from_the_current_base(self):
+        p = self.fixture()
+        p.add(ticket(title="Add a status code", scope=("api/**",), check="grep -q 201 api/handlers.py"))
+        p.add(ticket(front=('after = ["1"]',)))
+        p.rail("next")
+        p.write("api/handlers.py", "def handle():\n    return 201\n", base=p.worktree("1"))
+        p.rail("advance", "1")
+        p.rail("advance", "1")
+        p.rail("next")
+        self.assertIn("201", read(os.path.join(p.worktree("2"), "api", "handlers.py")))
+        self.assertEqual(p.git("merge-base", "--is-ancestor", "main", "2-fix-add"), "")
+
     def test_overlapping_scope_is_not_claimed_and_claims_belong_to_sessions(self):
         p = self.fixture()
         p.add(ticket())
@@ -314,6 +326,21 @@ class Remote(RailTest):
         self.assertEqual(a.add(ticket())["ticket"], "1")
         self.assertEqual(b.add(ticket(title="Other", scope=("api/**",)))["ticket"], "2")
         self.assertEqual(b.git("ls-remote", "origin", "refs/heads/rail/id/*").count("rail/id/"), 2)
+
+    def test_a_claim_made_offline_after_the_base_moved_still_reaches_the_remote(self):
+        a, b = self.remote_pair()
+        a.add(ticket())
+        b.git("commit", "--quiet", "--allow-empty", "-m", "base moves")
+        b.git("push", "--quiet", "origin", "main")
+        a.git("fetch", "--quiet")
+        remote = os.path.join(self.tmp, "remote.git")
+        os.rename(remote, remote + ".away")
+        a.rail("next", session="a")  # offline: the claim rebases onto the new base and can't push
+        os.rename(remote + ".away", remote)
+        a.fix_calc("1")
+        a.rail("advance", "1", session="a")
+        self.assertEqual(a.git("rev-parse", "1-fix-add"), a.git("ls-remote", "origin", "refs/heads/1-fix-add").split()[0] + "\n")
+        self.assertEqual(b.rail("status")["tickets"][0]["state"], "in-ci")
 
     def test_with_a_remote_ship_pushes_and_waits_for_the_forge(self):
         a, b = self.remote_pair()
