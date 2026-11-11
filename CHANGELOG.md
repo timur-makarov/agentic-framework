@@ -27,3 +27,4 @@ One line for each change, saying why.
 - Deny a download piped into a shell, disk wipes, and Bash commands that touch .env files or write the journal, because only a hook sees these inside a Bash command.
 - Ask the person before sudo, git reset --hard, git clean -f and rm -r outside the worktree, because each is sometimes right and a person should decide.
 - Wire the guard: rail init merges the deny and ask rules and the PreToolUse guard hook into .claude/settings.json, and doctor reports when either is missing, so the guards are on from the first session.
+- Add doc-lint for ## Areas at ship and in CI: every glob matches a tracked file, every directory at [map] depth is covered, and ARCHITECTURE.md stays under 150 lines, so the repo map can't drift from the tree.

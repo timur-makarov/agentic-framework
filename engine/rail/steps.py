@@ -4,7 +4,7 @@ import os
 import shutil
 from pathlib import Path
 
-from . import gitx, rules
+from . import doclint, gitx, rules
 from .project import event, events_path, ticket_path
 from .state import raised_tier
 from .ticket import Ticket, lint, rank
@@ -94,7 +94,7 @@ def setup(project, t, run, cwd=None):
 
 # --- ship and CI -------------------------------------------------------------------
 
-CHECKS = ["ticket-lint", "assumptions", "scope", "rules", "migration", "size", "verify", "checks"]
+CHECKS = ["ticket-lint", "assumptions", "scope", "rules", "migration", "size", "doc-lint", "verify", "checks"]
 
 
 def _stop(run, step):
@@ -163,6 +163,14 @@ def check(project, nn, ticket, ref, cwd, tier, run, patch_id, accepted=None):
                                                      "detail": f"{count} changed lines, over the {tier} cap of {cap}"}))
         tier = sized
     run.size = count
+
+    if gitx.read_blobs([f"{ref}:ARCHITECTURE.md"], project.root).get(f"{ref}:ARCHITECTURE.md") is None:
+        run.not_run("doc-lint")
+    else:
+        problems = doclint.areas(project, ref)
+        if not run.record("doc-lint", not problems, patch_id, f"{len(problems)} problems" if problems else None,
+                          output="ARCHITECTURE.md:\n" + "\n".join(f"- {p}" for p in problems)):
+            return _stop(run, "doc-lint")
 
     verify = project.config["commands"]["verify"]
     if verify:

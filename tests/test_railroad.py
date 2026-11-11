@@ -8,7 +8,7 @@ import threading
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from railtest import CONFIG, RailTest, ticket  # noqa: E402
+from railtest import ARCHITECTURE, CONFIG, RailTest, ticket
 
 
 def read(path):
@@ -51,7 +51,7 @@ class AddToMerge(RailTest):
         shipped = p.rail("advance", cwd=p.worktree("1"))
         self.assertEqual(shipped["state"], "merge-ready")
         self.assertEqual(shipped["action"], {"kind": "script", "brief": "rail advance 1", "command": "rail advance 1"})
-        self.assertEqual([s["step"] for s in shipped["steps"]], ["ticket-lint", "assumptions", "scope", "rules", "size", "verify", "checks"])
+        self.assertEqual([s["step"] for s in shipped["steps"]], ["ticket-lint", "assumptions", "scope", "rules", "size", "doc-lint", "verify", "checks"])
 
         merged = p.rail("advance", "1")
         self.assertEqual((merged["state"], merged["owner"], merged["reason"]["code"]), ("merged", "none", "MERGED"))
@@ -125,7 +125,8 @@ class Ship(RailTest):
         self.assertEqual((raised[0]["from"], raised[0]["to"], raised[0]["reason"]), ("LOW", "MEDIUM", "risk_paths"))
 
     def test_migration_needs_reversibility_and_rollback(self):
-        p = self.fixture(files={"db/migrations/001.sql": "create table t (id int);\n"})
+        p = self.fixture(files={"db/migrations/001.sql": "create table t (id int);\n",
+                                "ARCHITECTURE.md": ARCHITECTURE + "| db | db/** | schema and migrations |\n"})
         added = p.add(ticket(title="Add a column", scope=("db/**", "src/**")))
         self.assertEqual((added["tier"], added["state"], added["owner"]), ("HIGH", "new", "human"))
         p.rail("accept", "1")
@@ -361,7 +362,7 @@ class Reading(RailTest):
         found = p.rail("context", "1")
         self.assertEqual([a["area"] for a in found["areas"]], ["api"])
         self.assertIn("src/ (1 files)", found["digest"])
-        self.assertEqual(len(p.rail("context")["areas"]), 3)
+        self.assertEqual(len(p.rail("context")["areas"]), 2)
 
 
 class Usage(RailTest):

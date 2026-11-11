@@ -32,7 +32,6 @@ ARCHITECTURE = """\
 |---|---|---|
 | calc | src/** | the calculator |
 | api | api/** | public HTTP handlers |
-| db | db/** | schema and migrations |
 """
 
 
