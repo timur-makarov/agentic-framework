@@ -48,3 +48,4 @@ One line for each change, saying why.
 - Add the sweep: after [sweep] after unreviewed LOW tickets and ticketless commits, next offers rail sweep, which runs the free part and one review pass over them and writes a summary the agent turns into tickets, including "make it a check" tickets; its merge carries the Sweep: trailer.
 - Document GitHub setup, running from GitHub events, and the sweep, and make the loop, states, away and environments pages describe the forge.
 - Add a README with install and setup, so a person new to Rail can start from the docs alone; and let doctor say when the GitHub plan offers no required checks instead of calling it a mistake.
+- Record in section 25 what the cloud allowed for Phase 5: label writes work, branch deletion does not, and private repositories on the free plan have no required checks.

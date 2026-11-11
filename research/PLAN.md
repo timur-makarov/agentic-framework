@@ -1061,3 +1061,13 @@ Run on 2026-11-11 with Claude Code 2.1.322 and `claude-opus-5-5`. Rail ran on a 
 ### Phase 4: the guards under Claude Code
 
 On 2026-11-11 a nested `claude -p` (2.1.322, `--allowedTools=Bash,Read,Edit`) in a project set up with `rail init` tried ten actions. The guard hook denied `git commit --no-verify`, a force push, a push to `main`, `cat .env`, a Bash write to the journal and `curl ... | sh`. The permission rules denied the Read tool on `.env` and the Edit tool on the journal. `git clean -f` met an ask that nobody answered, so it didn't run. A control command ran. Afterwards the remote branches, the journal and the untracked file were unchanged, and the secret's value never appeared.
+
+### Phase 5: what the cloud allowed
+
+Checked on 2026-11-11 from the same cloud session against this repository:
+
+- **Labels work.** Adding a label to a pull request and removing it, through `gh api` REST, both passed the proxy, so `rail:go` and `rail:needs-you` work from a cloud session.
+- **Opening a pull request and the async merge work** (Phase 0).
+- **Branch deletion doesn't** (Phase 0), so merged and dropped branches wait for GitHub's "Automatically delete head branches" or a local session.
+- **Private repositories on GitHub's free plan have no rulesets or branch protection:** `GET /repos/{owner}/{repo}/rules/branches/main` returned 403 "Upgrade to GitHub Pro or make this repository public". There, `rail` can't be a required check. The engine still merges only on a green `rail` check, but a person can merge early, so `doctor` reports the setting as unavailable rather than missing.
+- **Not checked live:** the whole ticket lifecycle against GitHub. The tests run it on a fake GitHub (`tests/fake_gh.py`); a live run needs a throwaway repository.
