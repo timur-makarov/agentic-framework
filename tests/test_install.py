@@ -91,6 +91,17 @@ class Launcher(RailTest):
         self.assertEqual(result.returncode, 2)
         self.assertIn("rail init", result.stdout)
 
+    def test_docs_can_be_read_before_init_and_no_bytecode_is_left_in_a_project(self):
+        empty = os.path.join(self.tmp, "nowhere")
+        os.makedirs(empty)
+        result = subprocess.run([sys.executable, RAIL, "docs", "loop"], cwd=empty, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("# The loop", result.stdout)
+        p = self.fixture()
+        p.add(ticket())
+        p.rail("next")
+        self.assertEqual(p.git("status", "--porcelain", "--ignored", "--", ".rail"), "")
+
     def test_install_links_rail_into_local_bin(self):
         home = os.path.join(self.tmp, "home2")
         os.makedirs(home)

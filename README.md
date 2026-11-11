@@ -30,7 +30,8 @@ Write a ticket like `.rail/tickets/TEMPLATE.md` and run `rail add <file>`, or la
 and run `rail intake github`. Then tell Claude Code to work through the backlog: it runs `rail next`, does
 what the brief says, and runs `rail advance`, until a ticket needs you.
 
-Everything else is in the docs that ship with the engine: `rail docs`, then `rail docs loop`.
+Everything else is in the docs that ship with the engine, readable before `rail init` too: `rail docs`,
+then `rail docs loop`.
 
 ## This repository
 

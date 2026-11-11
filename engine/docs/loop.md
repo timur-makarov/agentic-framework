@@ -27,13 +27,15 @@ listed as resumable; `rail next --ticket NN` takes it over after that session en
 In the ticket's worktree, `advance` commits your in-scope changes and ships: it rebases onto a moved base,
 then runs ticket lint, the ASSUMED rows, scope, structure rules, the migration fields, size, doc-lint,
 `verify` and each `Check:` line. On MEDIUM and HIGH it then runs the review. With no remote, a ready
-ticket in `auto_tiers` is merged by the next `advance`, as a squash commit on the base branch; other tiers
+ticket in `auto_tiers` is merged by the next `advance` (run it from the project's root: the merge removes the
+worktree), as a squash commit on the base branch; other tiers
 wait for `rail accept NN` first. With a remote, every ticket has a pull request; once its required checks
 are green, `advance` merges an `auto_tiers` ticket through GitHub's async merge, and a person merges the
 rest. When only CI waits remain, `next` returns `gh run watch` for the run, then `rail next`.
 
 ## Other verbs
 
-- `rail status`: every ticket, its state and owner, and leftovers to clean up.
+- `rail status`: every ticket, its state and owner, LAST (the age of its last journal event) and NOTE (what it
+  waits for, a stale warning, or its pull request), then leftovers to clean up.
 - `rail context NN`: the `## Areas` rows a ticket touches, and a directory digest.
 - `rail docs TOPIC`: these pages. `rail docs cli` and `rail docs config` are the references.

@@ -20,6 +20,7 @@ if sys.version_info < (3, 11):
     sys.stderr.write("rail needs Python 3.11 or newer (found %d.%d). On macOS: brew install python\\n" % sys.version_info[:2])
     sys.exit(2)
 
+sys.dont_write_bytecode = True  # no __pycache__ under .rail/engine to commit by mistake
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "engine"))
 from rail.cli import main  # noqa: E402
 
@@ -29,14 +30,20 @@ sys.exit(main())
 INIT_TASK = """Rail is installed, and this project isn't set up for it yet: .rail/config.toml isn't on {base}.
 Read the repository to learn its stack, then propose each of these to the person and make the changes they confirm:
 1. [commands] in .rail/config.toml: `setup`, which runs in each new ticket worktree (install dependencies), and `verify`,
-   the whole project's checks: tests, lint, a secret scan over the branch's commits and, when a lockfile changes,
-   a dependency scan for this stack. A monorepo makes verify affected-aware with its own tools.
-2. ARCHITECTURE.md with a `## Areas` table: | Area | Paths | Holds |, one row per area. Paths are globs; Holds says
-   what lives there in a bug reporter's words. Cover every directory at depth {depth}. Keep the file under 150 lines.
+   the whole project's checks: tests, lint, a secret scan over the branch's commits ($RAIL_BASE..HEAD; RAIL_BASE is
+   set for every command) and, when a lockfile changes, a dependency scan for this stack. When no scanner is
+   installed, ask the person which to install, or leave it out and say so. A monorepo makes verify affected-aware.
+2. ARCHITECTURE.md with a `## Areas` table: | Area | Paths | Holds |, one row per area. Paths are globs, separated
+   by commas; Holds says what lives there in a bug reporter's words. Cover every directory at depth {depth}; hidden
+   directories such as .rail and .claude need no row, and neither do files at the root. At most 150 lines.
 3. [risk_paths] in .rail/config.toml: keep the defaults, and add the paths a person should see changed
    (auth, payments, infrastructure) to HIGH or MEDIUM.
 4. The [[rules]] in .rail/config.toml: keep, drop or add structure rules for this project.
-5. .worktreeinclude: local files a ticket worktree needs that git doesn't track, such as .env.
+5. .worktreeinclude at the root: one glob per line for local files a ticket worktree needs that git doesn't
+   track, such as .env. Leave it out when there are none.
+If the project already has its own agent workflow, hooks, guards, CI gates or repo map, list them and ask the
+person whether to keep, merge or retire each one; until they decide, both run, and a hook of theirs may block a
+step below. Then ask the person to make that commit.
 Then commit what rail init added together with these changes to {base}. With a remote, push a branch and open a
 pull request with `gh api` (gh pr doesn't work in cloud sessions); the person merges it.
 Finally run `rail doctor` and make the one-time settings it lists."""

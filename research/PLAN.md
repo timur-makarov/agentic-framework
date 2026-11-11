@@ -1071,3 +1071,15 @@ Checked on 2026-11-11 from the same cloud session against this repository:
 - **Branch deletion doesn't** (Phase 0), so merged and dropped branches wait for GitHub's "Automatically delete head branches" or a local session.
 - **Private repositories on GitHub's free plan have no rulesets or branch protection:** `GET /repos/{owner}/{repo}/rules/branches/main` returned 403 "Upgrade to GitHub Pro or make this repository public". There, `rail` can't be a required check. The engine still merges only on a green `rail` check, but a person can merge early, so `doctor` reports the setting as unavailable rather than missing.
 - **Not checked live:** the whole ticket lifecycle against GitHub. The tests run it on a fake GitHub (`tests/fake_gh.py`); a live run needs a throwaway repository.
+
+### Phase 6: ready to use
+
+On 2026-11-11 a fresh agent, allowed to read only the README and `rail docs`, set Rail up on a fresh repository and on an existing one (a copy of the current framework, with its own `AGENTS.md`, hooks and CI), with no remotes. In each, one MEDIUM ticket reached `merged`, with real reviews: in the fresh repository the reviewer caught a real bug (non-ASCII letters split a word), and in the existing one the ticket fixed a bug already on `main`. No `rail` command failed.
+
+What it found, and what changed:
+
+- **An existing repository's own guard blocked the init task's commit to `main`, and its old workflow stayed next to Rail's.** The init task now asks the person what to keep, merge or retire, and to make that commit.
+- **The engine left `__pycache__` files that got committed.** The launchers no longer write bytecode.
+- **`rail docs` didn't work before `rail init`.** It does now.
+- **Gaps in the docs and briefs:** the init task now says how to write `## Areas` and `.worktreeinclude`, and that `RAIL_BASE` names the range for a secret scan. The docs now say where a ticket draft goes, that the ticket file is outside `scope_paths`, and what `status` shows. Seed comments no longer point at this plan.
+- **A merge removed the worktree the shell stood in.** The merge's answer now says to run it from the project's root.

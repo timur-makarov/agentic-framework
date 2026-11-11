@@ -1,7 +1,9 @@
 # Tickets
 
-A ticket is a markdown file with TOML front matter between `+++` lines. Write one like
-`.rail/tickets/TEMPLATE.md`, then run `rail add <file>`.
+A ticket is a markdown file with TOML front matter between `+++` lines. Write a draft like
+`.rail/tickets/TEMPLATE.md` anywhere outside the repository (a temp file is fine), then run `rail add <file>`:
+it sets the ID and commits the ticket on its own branch, so the draft can go. `## Request` and `## Split` are
+optional sections.
 
 ```markdown
 +++
@@ -27,6 +29,8 @@ external_id = "github#123"
 - **ASSUMED rows** are verified after the claim: change `ASSUMED:` to `VERIFIED:` and say how. An open
   row blocks ship.
 - **Look at** is written before ship: what a reader of the change should check.
+- The ticket file and the journal are outside `scope_paths` on purpose: editing the ticket (VERIFIED rows,
+  Look at) never fails the scope check.
 - **The tier** is the highest of the author's choice, the floors that `risk_paths` and `migration_paths`
   set from `scope_paths` at add, and the size cap at ship. Tickets touching `migration_paths` must set
   `reversibility` and `rollback`.

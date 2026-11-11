@@ -49,3 +49,6 @@ One line for each change, saying why.
 - Document GitHub setup, running from GitHub events, and the sweep, and make the loop, states, away and environments pages describe the forge.
 - Add a README with install and setup, so a person new to Rail can start from the docs alone; and let doctor say when the GitHub plan offers no required checks instead of calling it a mistake.
 - Record in section 25 what the cloud allowed for Phase 5: label writes work, branch deletion does not, and private repositories on the free plan have no required checks.
+- Fix what the ready-to-use test found: the init task now asks about a project's existing agent workflow and leaves its commit to the person; the launchers write no bytecode into projects; rail docs works before rail init; commands get RAIL_BASE for range scans; the briefs and docs say how to write Areas, .worktreeinclude and ticket drafts; and a merge answers with the project's root as its cwd.
+- Make a ticket whose after dependency was dropped wait for a person, because it could otherwise wait forever.
+- Record the ready-to-use result in section 25 of the plan.

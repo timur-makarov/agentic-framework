@@ -2,7 +2,7 @@
 # Top-level keys come first: in TOML, a key below a [table] header belongs to that table.
 
 base_branch = "main"                      # reader: claim, ship, CI, merge
-auto_tiers = ["LOW", "MEDIUM"]            # accepted and merged with no person; other tiers get a contract PR and a person's merge
+auto_tiers = ["LOW", "MEDIUM"]            # accepted and merged with no person; a person approves other tiers' contracts and merges them
 migration_paths = ["**/migrations/**"]    # a HIGH floor; tickets touching them need reversibility and rollback
 
 [commands]
@@ -37,7 +37,7 @@ command = '''claude -p --safe-mode --system-prompt-file .rail/engine/reviewer.md
 command = "claude -p --safe-mode --tools Read,Grep,Glob"
                                           # point it at another vendor's CLI when you have one; claude is labelled same-model
 
-[[rules]]                                 # reader: ship and CI; structure rules on added lines (section 12)
+[[rules]]                                 # reader: ship and CI; structure rules on added lines (rail docs rules)
 id = "no-new-suppressions"
 forbid = ["eslint-disable", "@ts-ignore", "# noqa", ".skip("]
 allow = []

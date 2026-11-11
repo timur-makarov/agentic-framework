@@ -49,7 +49,7 @@ class AddToMerge(RailTest):
 
         p.fix_calc("1")
         shipped = p.rail("advance", cwd=p.worktree("1"))
-        self.assertEqual(shipped["state"], "merge-ready")
+        self.assertEqual((shipped["state"], shipped["cwd"]), ("merge-ready", "."))
         self.assertEqual(shipped["action"], {"kind": "script", "brief": "rail advance 1", "command": "rail advance 1"})
         self.assertEqual([s["step"] for s in shipped["steps"]], ["ticket-lint", "assumptions", "scope", "rules", "size", "doc-lint", "verify", "checks"])
 
@@ -280,6 +280,14 @@ class Parallel(RailTest):
         p.rail("next")
         self.assertIn("201", read(os.path.join(p.worktree("2"), "api", "handlers.py")))
         self.assertEqual(p.git("merge-base", "--is-ancestor", "main", "2-fix-add"), "")
+
+    def test_a_dropped_dependency_waits_for_a_person(self):
+        p = self.fixture()
+        p.add(ticket(title="Add a status code", scope=("api/**",), check="grep -q 201 api/handlers.py"))
+        p.add(ticket(front=('after = ["1"]',)))
+        p.rail("drop", "1")
+        waiting = p.rail("next")
+        self.assertEqual((waiting["owner"], waiting["waits"][0]["needs"]), ("human", "AFTER_DROPPED"))
 
     def test_overlapping_scope_is_not_claimed_and_claims_belong_to_sessions(self):
         p = self.fixture()

@@ -56,7 +56,8 @@ class Run:
 
 def run_command(project, cwd, nn, step, command, run, patch_id=None, label=None):
     """Run one configured command in `cwd` and record it."""
-    code, output, ms = run_shell(command, cwd, {"RAIL_TICKET": nn}, project.config["commands"]["timeout_secs"])
+    code, output, ms = run_shell(command, cwd, {"RAIL_TICKET": nn, "RAIL_BASE": project.base_ref},
+                                 project.config["commands"]["timeout_secs"])
     status = "timeout" if code is None else f"exit {code}"
     detail = (f"{label}: {status}" if code != 0 else label) if label else status
     return run.record(step, code == 0, patch_id, detail, ms, output=f"$ {command}\n{tail(output)}")

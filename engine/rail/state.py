@@ -61,6 +61,7 @@ class Facts:
         self.last_fail = None
         self.setup_failed = None
         self.after_open = []
+        self.after_dropped = []
         self.overlaps = []
         self.open_assumptions = []
         from .review import Ledger, load_doc
@@ -217,6 +218,7 @@ def derive(project, tickets):
         if f.state != "accepted" or not f.ticket:
             continue
         f.after_open = [a for a in f.ticket.after if a not in facts or facts[a].state != "merged"]
+        f.after_dropped = [a for a in f.after_open if a in facts and facts[a].state == "dropped"]
         f.overlaps = [o.id for o in implementing if o.ticket and any(
             globs_overlap(a, b) for a in f.ticket.scope for b in o.ticket.scope)]
     return facts

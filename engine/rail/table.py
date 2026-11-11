@@ -157,6 +157,9 @@ ROWS = [
     ("APPROVE_CONTRACT",   "human", "human_wait",  lambda f: f.state == "new",
      lambda f: f"Approve the contract of ticket {f.id} ({f.tier}): read {ticket_path(f.id)} on branch {f.t.name},"
                f" then run: rail accept {f.id}. To change it, say what to change. To reject it, run: rail drop {f.id}"),
+    ("AFTER_DROPPED",      "human", "human_wait",  lambda f: f.state == "accepted" and f.after_dropped,
+     lambda f: f"Ticket {f.id} comes after ticket {_join(f.after_dropped)}, which was dropped. A person decides:"
+               f" remove it from `after` (rail amend {f.id} --file FILE), or drop ticket {f.id}."),
     ("WAITING_AFTER",      "none",  "rest",        lambda f: f.state == "accepted" and f.after_open,
      lambda f: f"Ticket {f.id} waits for ticket {_join(f.after_open)} to merge."),
     ("SCOPE_OVERLAP",      "none",  "rest",        lambda f: f.state == "accepted" and f.overlaps,
@@ -226,7 +229,7 @@ ROWS = [
      lambda f: f"The merge of {_pr(f)} is requested; rail next sees it on the base branch once GitHub lands it."),
     ("MERGE",              "agent", "script",      lambda f: f.state == "merge-ready" and (f.auto or f.merge_approved)
                                                    and not (f.project.remote and not f.auto),
-     lambda f: f"rail advance {f.id}"),
+     lambda f: f"rail advance {f.id}"),  # it merges, and removes the worktree: run it from the project's root
     ("MERGE_BY_PERSON",    "human", "human_wait",  lambda f: f.state == "merge-ready",
      _merge_by_person),
 ]

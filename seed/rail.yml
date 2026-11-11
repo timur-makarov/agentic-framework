@@ -1,4 +1,4 @@
-# Rail's check: repeats the ship checks on every pull request (plan, section 11).
+# Rail's check: repeats the ship checks on every pull request (rail docs github).
 # Make `rail` a required check on the base branch. CI runs no model, so it needs no secrets.
 name: rail
 on:
