@@ -1,12 +1,13 @@
 """State derivation (plan, section 7; SPEC, section 4). State is derived from git and the journal, never stored."""
 
+import os
+
 from . import gitx
-from .project import NON_PRODUCT, WORKTREES
-from .ticket import TIERS, highest, lint, rank
+from .project import NON_PRODUCT, ticket_path
+from .ticket import TIERS, Ticket, highest, lint, rank
 from .util import globs_overlap, match_any
 
-STATES = ("new", "accepted", "implementing", "reviewing", "in-ci", "merge-ready", "merged", "dropped")
-OPEN = ("implementing", "reviewing", "in-ci", "merge-ready")
+OPEN = ("implementing", "reviewing", "in-ci", "merge-ready")  # claimed and not finished
 
 
 def floor(project, scope):
@@ -60,6 +61,7 @@ class Facts:
         self.setup_failed = None
         self.after_open = []
         self.overlaps = []
+        self.open_assumptions = []
 
         author = self.ticket.tier if self.ticket and self.ticket.tier in TIERS else "LOW"
         if self.accepted:
@@ -92,18 +94,21 @@ class Facts:
         t, project = self.t, self.project
         if t.merged:
             return "merged"
-        if self.dropped_event or (not t.name and t.id_taken):
-            return "dropped"
-        if not t.name:
-            return "dropped"  # a ticket file on base with no branch and no merge
+        if self.dropped_event or not t.name:
+            return "dropped"  # a dropped event, or the ID ref is all that is left (SPEC, section 4)
         if not self.accepted:
             return "new"
         if not self.claimed:
             return "accepted"
 
         self.patch_id = project.patch_id(t.ref)
+        self.open_assumptions = self.ticket.open_assumptions()
         if self.worktree:
             self.dirty = gitx.dirty(self.worktree, exclude=[NON_PRODUCT[1]])
+            copy = os.path.join(self.worktree, ticket_path(t.id))
+            if os.path.exists(copy):  # the agent marks rows VERIFIED here before advance commits them
+                with open(copy) as f:
+                    self.open_assumptions = Ticket(f.read()).open_assumptions()
         steps = [e for e in t.events if e.get("event") == "step"]
         setups = [e for e in steps if e.get("step") == "setup"]
         if setups and setups[-1].get("result") == "fail":
@@ -136,7 +141,3 @@ def derive(project, tickets):
         f.overlaps = [o.id for o in implementing if o.ticket and any(
             globs_overlap(a, b) for a in f.ticket.scope for b in o.ticket.scope)]
     return facts
-
-
-def worktree_dir(project):
-    return f"{project.root}/{WORKTREES}"

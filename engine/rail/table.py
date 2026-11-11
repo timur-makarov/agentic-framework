@@ -35,7 +35,7 @@ def _implement(f):
 
 
 def _assumptions(f):
-    rows = "\n".join(f"- {r}" for r in f.ticket.open_assumptions())
+    rows = "\n".join(f"- {r}" for r in f.open_assumptions)
     return (f"Ticket {f.id} has open ASSUMED rows. Verify each one in the code or the docs before you implement,"
             f" then change \"ASSUMED:\" to \"VERIFIED:\" in {ticket_path(f.id)} and say how you checked."
             f" If you can't verify one, ask the person and stop.\n{rows}\nWork in {f.cwd}.")
@@ -78,7 +78,7 @@ ROWS = [
      lambda f: f"rail next --ticket {f.id}"),
     ("SETUP_FAILED",       "agent", "agent_task",  lambda f: f.state == "implementing" and f.setup_failed,
      _setup_failed),
-    ("VERIFY_ASSUMPTIONS", "agent", "agent_task",  lambda f: f.state == "implementing" and f.ticket.open_assumptions(),
+    ("VERIFY_ASSUMPTIONS", "agent", "agent_task",  lambda f: f.state == "implementing" and f.open_assumptions,
      _assumptions),
     ("STEP_FAILED",        "agent", "agent_task",  lambda f: f.state == "implementing" and f.last_fail and not f.dirty,
      _step_failed),

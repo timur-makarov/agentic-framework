@@ -128,12 +128,20 @@ def transition(project, f, code):
 
 def settle(project, nn, explicit):
     """Read the table for one ticket, making the moves `next` makes itself, until a row names a move to report."""
-    receipts = []
+    receipts, reran_setup = [], False
     for _ in range(6):
         tickets, facts = load(project)
         f = facts[nn]
         f.explicit = explicit
         code, owner, action = first_match(f)
+        if code == "SETUP_FAILED" and explicit and not reran_setup:
+            # `next --ticket NN` runs a failed setup again, once (the SETUP_FAILED brief says so).
+            run = steps.Run(project, f.t)
+            steps.setup(project, f.t, run)
+            project.append_events(f.t, run.events, "setup")
+            receipts += run.steps
+            reran_setup = True
+            continue
         if code not in TRANSITIONS:
             return f, receipts
         done, run = transition(project, f, code)
@@ -222,14 +230,17 @@ def cmd_next(project, args):
         nn = project.find(explicit, tickets).id
         f, receipts = settle(project, nn, explicit=True)
         if f is None:
-            return answer(nn, None, "none", None, "CLAIMED_ELSEWHERE", receipts,
-                          action={"kind": "rest", "brief": f"Another session claimed ticket {nn} first."})
+            return answer(nn, None, "none", {"kind": "rest", "brief": f"Another session claimed ticket {nn} first."},
+                          "CLAIMED_ELSEWHERE", receipts)
         return from_facts(f, receipts, leftovers=leftovers)
 
+    # Any ticket the agent can act on comes first: this session's own, then new work in ID order.
     tickets, facts = load(project)
     mine = [f for f in facts.values() if f.state in OPEN and not f.claimed_elsewhere]
     fresh = [f for f in facts.values() if f.state in ("new", "accepted")]
     for candidate in mine + fresh:
+        if first_match(candidate)[1] != "agent":
+            continue
         f, receipts = settle(project, candidate.id, explicit=False)
         if f is not None and first_match(f)[1] == "agent":
             return from_facts(f, receipts, leftovers=leftovers)
@@ -311,7 +322,7 @@ def cmd_advance(project, args):
         steps.ship(project, f, run)
         return finish(project, f, run, "ship" if run.ok else "ship failed")
 
-    if f.state == "merge-ready" and f.auto and not project.remote:
+    if f.state == "merge-ready" and f.auto and not project.remote and f.worktree:
         base_tip = gitx.rev(project.base_ref, project.root)
         if not gitx.ok(["merge-base", "--is-ancestor", base_tip, f.t.ref], project.root):
             # The base moved since ship: rebase and ship again before merging (plan, section 10).
@@ -358,9 +369,6 @@ def cmd_status(project, args):
             note = f"STALE: no event for {age(last)[:-1]} days"
         elif f.state in ("new", "accepted") and code in ("WAITING_AFTER", "SCOPE_OVERLAP"):
             note = action["brief"]
-        if t.ticket is None and not t.merged and f.state != "dropped":
-            leftovers.append({"kind": "branch", "ref": t.name, "reason": "no ticket; left for you"})
-            continue
         rows.append({"ticket": nn, "title": t.ticket.title if t.ticket else "", "state": f.state, "owner": owner,
                      "tier": f.tier, "last_event": age(last), "branch": t.name, "note": note})
         if f.state in ("merged", "dropped"):
@@ -370,6 +378,8 @@ def cmd_status(project, args):
                 leftovers.append({"kind": "branch", "ref": t.branch, "reason": f"ticket {nn} {f.state}"})
             if t.remote_branch:
                 leftovers.append({"kind": "remote branch", "ref": t.remote_branch, "reason": f"ticket {nn} {f.state}"})
+    for branch in project.orphans:
+        leftovers.append({"kind": "branch", "ref": branch, "reason": "no ticket; left for you"})
     return answer(code="STATUS", tickets=rows, leftovers=leftovers)
 
 

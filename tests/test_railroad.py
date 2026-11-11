@@ -108,6 +108,7 @@ class Ship(RailTest):
         path = os.path.join(p.worktree("1"), ".rail", "tickets", "1.md")
         text = read(path).replace("ASSUMED: nobody", "VERIFIED: nobody")
         p.write(".rail/tickets/1.md", text, base=p.worktree("1"))
+        self.assertEqual(p.rail("next")["reason"]["code"], "IMPLEMENT")
         self.assertEqual(p.rail("advance", "1")["state"], "merge-ready")
 
     def test_risk_path_change_raises_the_tier_at_ship(self):
@@ -172,6 +173,33 @@ class Ship(RailTest):
         self.assertEqual((failed["steps"][0]["step"], failed["steps"][0]["result"]), ("rebase", "fail"))
         self.assertIn("src/calc.py", failed["steps"][0]["detail"])
         self.assertEqual(failed["state"], "implementing")
+
+
+class Claim(RailTest):
+    def test_setup_runs_in_the_worktree_with_its_include_files_and_reruns_after_a_failure(self):
+        setup = 'test -f .env && test "$RAIL_TICKET" = 1'
+        p = self.fixture(config=CONFIG.replace("[commands]", f"[commands]\nsetup = '{setup}'"),
+                         files={".worktreeinclude": ".env\n", ".gitignore": ".claude/worktrees/\n__pycache__/\n.env\n"})
+        p.add(ticket())
+        failed = p.rail("next", expect=3)  # setup is a step, so a failed setup exits 3
+        self.assertEqual((failed["reason"]["code"], failed["steps"][0]["result"]), ("SETUP_FAILED", "fail"))
+        p.write(".env", "TOKEN=local\n")
+        p.write(".env", "TOKEN=local\n", base=p.worktree("1"))
+        rerun = p.rail("next", "--ticket", "1")
+        self.assertEqual((rerun["reason"]["code"], rerun["steps"][0]["result"]), ("IMPLEMENT", "pass"))
+        p.rail("drop", "1")
+        p.add(ticket(title="Fix add again"))
+        self.assertEqual(p.rail("next", expect=3)["reason"]["code"], "SETUP_FAILED")  # ticket 2: RAIL_TICKET is 2
+        self.assertEqual(read(os.path.join(p.worktree("2"), ".env")), "TOKEN=local\n")
+
+    def test_a_branch_that_belongs_to_no_ticket_is_left_alone(self):
+        p = self.fixture()
+        p.git("branch", "7-old-experiment")
+        self.assertEqual(p.rail("next")["reason"]["code"], "NO_WORK")
+        self.assertIn("7-old-experiment", p.git("branch"))
+        self.assertEqual(p.rail("status")["leftovers"],
+                         [{"kind": "branch", "ref": "7-old-experiment", "reason": "no ticket; left for you"}])
+        self.assertEqual(p.add(ticket())["ticket"], "1")
 
 
 class TicketLint(RailTest):

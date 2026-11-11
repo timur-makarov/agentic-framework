@@ -78,6 +78,7 @@ class Project:
         self.online = False
         self.session = os.environ.get("CLAUDE_CODE_SESSION_ID") or None
         self.ids_dir = os.path.join(common, "rail", "ids")
+        self.orphans = []
 
     # --- refs ---------------------------------------------------------------
 
@@ -147,11 +148,16 @@ class Project:
             source = t.ref or base
             specs += [f"{source}:{ticket_path(nn)}", f"{source}:{events_path(nn)}"]
         blobs = gitx.read_blobs(specs, self.root)
-        for nn, t in found.items():
+        self.orphans = []
+        for nn, t in list(found.items()):
             source = t.ref or base
             text = blobs.get(f"{source}:{ticket_path(nn)}")
             t.ticket = Ticket(text) if text is not None else None
             t.events = parse_events(blobs.get(f"{source}:{events_path(nn)}"))
+            if t.ticket is None and not t.merged and not t.id_taken:
+                # A branch named like a ticket that belongs to no ticket: listed for the person, never touched.
+                self.orphans.append(t.name)
+                del found[nn]
         return dict(sorted(found.items(), key=lambda item: int(item[0])))
 
     def find(self, key, tickets=None):
