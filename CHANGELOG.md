@@ -32,3 +32,4 @@ One line for each change, saying why.
 - Start a claimed ticket from the current base branch, because a branch made at add misses work merged since, such as the ticket it comes after.
 - Run every git command with core.quotePath=false, because git quotes non-ASCII paths and the engine then misread them in scope, floors, the size count and context.
 - Add rail docs: pages ship inside the engine, and the config and CLI reference pages are generated from the engine, so the docs a project reads match the engine it runs.
+- Add the docs pages for the loop, tickets and states, so an agent new to a project learns the railroad from rail docs.

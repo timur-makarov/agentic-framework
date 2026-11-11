@@ -37,3 +37,17 @@ class Reference(RailTest):
         self.assertIn("Structure rules", p.rail("docs", "rules", raw=True).stdout)
         failed = p.rail("docs", "nothing", expect=2)
         self.assertIn("topics: ", failed["reason"]["message"])
+
+
+class Loop(RailTest):
+    def test_the_loop_ticket_and_state_pages_cover_what_an_agent_needs(self):
+        p = self.fixture()
+        loop = p.rail("docs", "loop")["text"]
+        for text in ("rail next --json", "rail advance --json", "owner", "human_wait", "Exit codes"):
+            self.assertIn(text, loop)
+        tickets = p.rail("docs", "tickets")["text"]
+        for text in ("rail add", "Check:", "ASSUMED", "rail amend", "rail/id/NN"):
+            self.assertIn(text, tickets)
+        states = p.rail("docs", "states")["text"]
+        for state in ("new", "accepted", "implementing", "reviewing", "in-ci", "merge-ready", "merged", "dropped"):
+            self.assertIn(f"| `{state}` |", states)
