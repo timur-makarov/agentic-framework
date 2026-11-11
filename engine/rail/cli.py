@@ -18,7 +18,7 @@ from .ticket import Ticket, branch_name, highest, lint, rank, with_id, with_tier
 from .util import RailError, age, match_any
 
 VERBS = ("init", "add", "accept", "amend", "answer", "next", "advance", "status", "context", "drop", "doctor", "ci",
-         "consult")
+         "consult", "docs")
 STALE_DAYS = 3
 
 
@@ -639,6 +639,17 @@ def init_task(project):
     return answer(owner="agent", code="INIT_TASK", action={"kind": "agent_task", "brief": brief}, cwd=".")
 
 
+def cmd_docs(args):
+    from . import docs
+
+    if not args.topic:
+        return answer(code="DOCS", action={"kind": "rest", "brief": ""}, topic=None, text=docs.index())
+    text = docs.page(args.topic, parser())
+    if text is None:
+        raise RailError(f"no docs topic '{args.topic}'; topics: {', '.join(docs.topics())}", code="NO_TOPIC")
+    return answer(code="DOCS", action={"kind": "rest", "brief": ""}, topic=args.topic, text=text)
+
+
 def cmd_doctor(project, args):
     from . import doctor
 
@@ -707,6 +718,8 @@ def cmd_ci(project, args):
 def render(result):
     if not result.get("ok"):
         return f"rail: {result['reason'].get('message')}"
+    if "text" in result:
+        return result["text"].rstrip("\n")
     if "tickets" in result:
         lines = [f"{'TICKET':<7} {'STATE':<13} {'OWNER':<6} {'TIER':<7} {'LAST':<5} NOTE"]
         for r in result["tickets"]:
@@ -774,6 +787,8 @@ def parser():
     consult_ = verb("consult", "ask the consult pack for advice on one question", ticket=False)
     consult_.add_argument("ticket", help="ticket ID")
     consult_.add_argument("question")
+    docs_ = verb("docs", "the framework's docs; with no topic, the list of topics", ticket=False)
+    docs_.add_argument("topic", nargs="?")
     verb("init", "set this project up for Rail", ticket=False)
     verb("doctor", "check the setup and print what's missing", ticket=False)
     verb("ci", "the rail check: the ship checks again on a pull request's head", ticket=False)
@@ -810,6 +825,8 @@ def main(argv=None):
             return hooks.run(args.name)
         if args.verb == "init":
             result = cmd_init(args)
+        elif args.verb == "docs":
+            result = cmd_docs(args)
         else:
             result = globals()[f"cmd_{args.verb}"](Project(os.getcwd()), args)
         code = 3 if any(s.get("result") == "fail" for s in result.get("steps", [])) else 0

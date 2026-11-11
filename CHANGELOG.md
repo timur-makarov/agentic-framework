@@ -31,3 +31,4 @@ One line for each change, saying why.
 - Make doc-lint check that links and headings in ARCHITECTURE.md and AGENTS.md resolve, and that a change adding or removing a top-level directory updates ARCHITECTURE.md, so the docs keep pointing at what exists.
 - Start a claimed ticket from the current base branch, because a branch made at add misses work merged since, such as the ticket it comes after.
 - Run every git command with core.quotePath=false, because git quotes non-ASCII paths and the engine then misread them in scope, floors, the size count and context.
+- Add rail docs: pages ship inside the engine, and the config and CLI reference pages are generated from the engine, so the docs a project reads match the engine it runs.
