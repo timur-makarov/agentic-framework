@@ -72,22 +72,28 @@ def doctor_checks(project, repo):
                   "in Settings > General > Pull Requests allow squash merging only, with 'Pull request title and "
                   "description' as the default message"))
     base = project.base
-    contexts = set()
+    contexts, plan_limit = set(), False
     try:
         for rule in api("GET", f"repos/{repo}/rules/branches/{base}") or []:
             if rule.get("type") == "required_status_checks":
                 contexts |= {c.get("context") for c in rule.get("parameters", {}).get("required_status_checks", [])}
-    except ForgeError:
-        pass
+    except ForgeError as e:
+        plan_limit = e.status == 403 and "Upgrade" in str(e)
     try:
         protection = api("GET", f"repos/{repo}/branches/{base}/protection/required_status_checks") or {}
         contexts |= set(protection.get("contexts", []))
         contexts |= {c.get("context") for c in protection.get("checks", [])}
     except ForgeError:
         pass
-    found.append(("required check", "rail" in contexts,
-                  f"rail is required on {base}" if "rail" in contexts else
-                  f"make the rail check required on {base} (a ruleset or branch protection)"))
+    if plan_limit and "rail" not in contexts:
+        # Private repositories on GitHub's free plan have no rulesets or branch protection. The engine still merges
+        # only on a green rail check, but nothing stops a person merging early.
+        found.append(("required check", None, "this repository's GitHub plan offers no required checks; the engine"
+                                              " merges only on a green rail check, and a person merging should check it"))
+    else:
+        found.append(("required check", "rail" in contexts,
+                      f"rail is required on {base}" if "rail" in contexts else
+                      f"make the rail check required on {base} (a ruleset or branch protection)"))
     try:
         names = {label["name"] for label in api("GET", f"repos/{repo}/labels?per_page=100") or []}
     except ForgeError as e:
