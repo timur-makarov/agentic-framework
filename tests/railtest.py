@@ -10,10 +10,18 @@ import unittest
 
 RAIL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin", "rail")
 
-CONFIG = """\
+FAKE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fake_reviewer.py")
+
+CONFIG = f"""\
 [commands]
 verify = "python3 -m py_compile src/calc.py"
 timeout_secs = 60
+
+[review]
+command = "python3 {FAKE}"
+
+[consult]
+command = "python3 {FAKE} --consult"
 """
 
 ARCHITECTURE = """\
@@ -81,10 +89,31 @@ class Fixture:
     def git(self, *args, cwd=None):
         return subprocess.run(["git", *args], cwd=cwd or self.root, capture_output=True, text=True, check=True).stdout
 
+    @property
+    def reviews(self):
+        return self.root + ".reviews.json"
+
+    @property
+    def review_log(self):
+        return self.root + ".reviews.log"
+
+    def queue_reviews(self, *responses):
+        """What the stand-in reviewer answers to the next review runs, in order."""
+        with open(self.reviews, "w") as f:
+            json.dump(list(responses), f)
+
+    def briefs(self):
+        if not os.path.exists(self.review_log):
+            return []
+        with open(self.review_log) as f:
+            return [json.loads(line) for line in f]
+
     def rail(self, *args, cwd=None, session="session-a", expect=0, raw=False):
         env = dict(os.environ)
         env.pop("RAIL_TICKET", None)
         env["CLAUDE_CODE_SESSION_ID"] = session
+        env["RAIL_FAKE_REVIEWS"] = self.reviews
+        env["RAIL_FAKE_LOG"] = self.review_log
         cmd = [sys.executable, RAIL, *args] + ([] if raw else ["--json"])
         result = subprocess.run(cmd, cwd=cwd or self.root, capture_output=True, text=True, env=env)
         if expect is not None and result.returncode != expect:

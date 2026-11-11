@@ -51,7 +51,7 @@ class AddToMerge(RailTest):
         shipped = p.rail("advance", cwd=p.worktree("1"))
         self.assertEqual(shipped["state"], "merge-ready")
         self.assertEqual(shipped["action"], {"kind": "script", "brief": "rail advance 1", "command": "rail advance 1"})
-        self.assertEqual([s["step"] for s in shipped["steps"]], ["ticket-lint", "assumptions", "scope", "verify", "checks"])
+        self.assertEqual([s["step"] for s in shipped["steps"]], ["ticket-lint", "assumptions", "scope", "rules", "size", "verify", "checks"])
 
         merged = p.rail("advance", "1")
         self.assertEqual((merged["state"], merged["owner"], merged["reason"]["code"]), ("merged", "none", "MERGED"))
@@ -118,13 +118,11 @@ class Ship(RailTest):
         p.fix_calc("1")
         p.write("src/report.sql", "select 1;\n", base=p.worktree("1"))
         shipped = p.rail("advance", "1")
-        self.assertEqual((shipped["state"], shipped["tier"]), ("reviewing", "MEDIUM"))
-        self.assertEqual(shipped["reason"]["code"], "REVIEW_UNAVAILABLE")
+        self.assertEqual((shipped["state"], shipped["tier"]), ("merge-ready", "MEDIUM"))
+        self.assertEqual([s["step"] for s in shipped["steps"]][-1], "review")
         raised = [json.loads(l) for l in p.git("show", "1-fix-add:.rail/journal/1-events.jsonl").splitlines()
                   if json.loads(l)["event"] == "tier_raised"]
         self.assertEqual((raised[0]["from"], raised[0]["to"], raised[0]["reason"]), ("LOW", "MEDIUM", "risk_paths"))
-        again = p.rail("advance", "1")
-        self.assertEqual(again["steps"], [{"step": "review", "status": "unavailable", "detail": "built in Phase 3"}])
 
     def test_migration_needs_reversibility_and_rollback(self):
         p = self.fixture(files={"db/migrations/001.sql": "create table t (id int);\n"})
@@ -137,9 +135,11 @@ class Ship(RailTest):
         failed = p.rail("advance", "1", expect=3)
         self.assertEqual(failed_step(failed), ("migration", "missing reversibility, rollback"))
         path = os.path.join(p.worktree("1"), ".rail", "tickets", "1.md")
-        text = read(path).replace('tier = "LOW"', 'tier = "LOW"\nreversibility = "expand-contract"\nrollback = "drop column c"')
+        text = read(path).replace('tier = "HIGH"', 'tier = "HIGH"\nreversibility = "expand-contract"\nrollback = "drop column c"')
         p.write(".rail/tickets/1.md", text, base=p.worktree("1"))
-        self.assertEqual(p.rail("advance", "1")["state"], "reviewing")
+        ready = p.rail("advance", "1")
+        self.assertEqual((ready["state"], ready["owner"], ready["reason"]["code"]), ("merge-ready", "human", "MERGE_BY_PERSON"))
+        self.assertEqual([s["step"] for s in ready["steps"]][-2:], ["review", "security"])
 
     def test_base_moved_rebases_and_ships_again_before_merge(self):
         p = self.fixture()

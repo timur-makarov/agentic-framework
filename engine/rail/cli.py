@@ -7,16 +7,18 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 
 from . import areas, gitx, hooks, steps
 from .project import Project, event, events_path, ticket_path
 from .state import OPEN, derive, floor
 from .table import TRANSITIONS, first_match
-from .ticket import Ticket, branch_name, highest, lint, rank, with_id
+from .ticket import Ticket, branch_name, highest, lint, rank, with_id, with_tier
 from .util import RailError, age, match_any
 
-VERBS = ("init", "add", "accept", "next", "advance", "status", "context", "drop", "doctor", "ci")
+VERBS = ("init", "add", "accept", "amend", "answer", "next", "advance", "status", "context", "drop", "doctor", "ci",
+         "consult")
 STALE_DAYS = 3
 
 
@@ -112,8 +114,14 @@ def transition(project, f, code):
     run = steps.Run(project, t)
     if code == "ACCEPT_AUTO":
         ensure_local(project, t)
-        project.append_events(t, [event(t.id, "accepted", by="engine", via="lint", tier=f.tier,
-                                        contract=f.ticket.contract_hash())], "accept")
+        project.append_events(t, [accepted_event(t.id, f.ticket, f.tier, "engine", "lint")], "accept")
+    elif code == "CONSULT":
+        from . import consult
+        last = [e for e in t.events if e.get("event") == "step" and e.get("step") == f.consult_due]
+        question = (f"The step '{f.consult_due}' failed {f.attempts.get(f.consult_due)} times. What is wrong, and"
+                    " should the agent proceed, change its approach, or stop and ask a person?")
+        consult.ask(project, f, "retry_cap", f.consult_due, question, last[-1].get("detail", "") if last else "", run)
+        commit(project, f, run, "consult")
     elif code == "CLAIM":
         if not claim(project, t):
             return False, run
@@ -183,10 +191,13 @@ def cmd_add(project, args):
     def build(nn):
         body = with_id(text, nn)
         ticket = Ticket(body)
-        files = {ticket_path(nn): body}
         tier = highest(ticket.tier, floor(project, ticket.scope)[0])
+        if tier != ticket.tier:  # a risk or migration path raised it: the ticket says so, and that tier freezes
+            body = with_tier(body, tier)
+            ticket = Ticket(body)
+        files = {ticket_path(nn): body}
         if tier in project.config["auto_tiers"]:
-            accepted = event(nn, "accepted", by="engine", via="lint", tier=tier, contract=ticket.contract_hash())
+            accepted = accepted_event(nn, ticket, tier, "engine", "lint")
             files[events_path(nn)] = json.dumps(accepted, separators=(",", ":")) + "\n"
         return gitx.commit_files(project.root, base_tip, files, f"{nn}: add ticket: {ticket.title}")
 
@@ -204,21 +215,141 @@ def cmd_add(project, args):
     return from_facts(f, receipts, branch=branch)
 
 
+def accepted_event(nn, ticket, tier, by, via, note=None):
+    """An accepted event. It also keeps the scope and the Done Contract's own hash, so amend can say what changed."""
+    fields = {"by": by, "via": via, "tier": tier, "contract": ticket.contract_hash(), "done": ticket.done_hash(),
+              "scope_paths": sorted(ticket.scope)}
+    if note:
+        fields["note"] = note
+    return event(nn, "accepted", **fields)
+
+
 def cmd_accept(project, args):
+    """A person's one act that continues any wait (plan, section 10): approve a contract or an amend, or continue."""
     project.sync()
     tickets, facts = load(project)
     nn = project.find(args.ticket or requested(project, args), tickets).id
     f = facts[nn]
-    if f.state != "new":
-        raise RailError(f"ticket {nn} is {f.state}; nothing waits for a person's approval", code="NOTHING_TO_ACCEPT")
-    if f.lint_errors:
-        raise RailError(f"ticket {nn} fails ticket lint: {'; '.join(f.lint_errors)}", code="TICKET_LINT")
+    note = args.note or None
+    if f.state == "new":
+        if f.lint_errors:
+            raise RailError(f"ticket {nn} fails ticket lint: {'; '.join(f.lint_errors)}", code="TICKET_LINT")
+        events = [accepted_event(nn, f.ticket, f.tier, "person", "accept", note)]
+    elif f.amend_pending:
+        events = [accepted_event(nn, f.ticket, f.tier, "person", "accept", note)]
+    elif f.state in OPEN and first_match(f)[1] == "human":
+        events = [event(nn, "continued", via="accept", **({"note": note} if note else {}))]
+    else:
+        raise RailError(f"ticket {nn} is {f.state}, and nothing waits for a person", code="NOTHING_TO_ACCEPT")
     ensure_local(project, f.t)
-    note = {"note": args.note} if args.note else {}
-    project.append_events(f.t, [event(nn, "accepted", by="person", via="accept", tier=f.tier,
-                                      contract=f.ticket.contract_hash(), **note)], "accept")
+    project.append_events(f.t, events, "accept")
     tickets, facts = load(project)
     return from_facts(facts[nn])
+
+
+def cmd_answer(project, args):
+    """Record how a review finding ended: fixed, declined with a reason, or parked (plan, section 8)."""
+    project.sync()
+    tickets, facts = load(project)
+    f = facts[project.find(args.ticket, tickets).id]
+    fid = args.finding.upper()
+    if fid not in f.ledger.findings:
+        raise RailError(f"ticket {f.id} has no finding {fid}", code="NO_FINDING")
+    if args.outcome == "declined" and not args.reason:
+        raise RailError("a decline needs a reason")
+    by = "owner" if args.owner else "author"
+    if args.outcome == "declined" and by == "author" and f.ledger.findings[fid].get("severity") == "blocking":
+        # The author can't decline a blocking finding: declining disputes it, and a fresh refuter decides.
+        record = event(f.id, "finding", id=fid, outcome="open", by="author", disputed=True, reason=args.reason)
+    else:
+        record = event(f.id, "finding", id=fid, outcome=args.outcome, by=by, reason=args.reason or "")
+    ensure_local(project, f.t)
+    project.append_events(f.t, [record], f"answer {fid}")
+    tickets, facts = load(project)
+    return from_facts(facts[f.id])
+
+
+def cmd_amend(project, args):
+    """Change a frozen contract (plan, section 5): the Done Contract, the scope or the tier, which only rises."""
+    project.sync()
+    tickets, facts = load(project)
+    f = facts[project.find(args.ticket or requested(project, args), tickets).id]
+    t = f.t
+    if f.state in ("merged", "dropped"):
+        raise RailError(f"ticket {f.id} is {f.state}; follow-up work is a new ticket with caused_by")
+    path = os.path.join(t.worktree, ticket_path(t.id)) if t.worktree else None
+    if args.file:
+        with open(args.file) as fh:
+            text = fh.read()
+    elif path:
+        with open(path) as fh:
+            text = fh.read()
+    else:
+        raise RailError("edit the ticket in its worktree, or pass the new ticket with --file")
+    new = Ticket(text)
+    errors = lint(new, expect_id=t.id)
+    if errors:
+        return answer(t.id, f.state, "agent", {"kind": "agent_task", "brief": "Fix the ticket, then amend again:\n- "
+                                                + "\n- ".join(errors)}, "TICKET_LINT", [
+            {"step": "ticket-lint", "status": "ran", "result": "fail", "detail": "; ".join(errors)}], f.cwd)
+    events, last = [], f.accepted
+    if last:
+        if rank(new.tier) < rank(last.get("tier")):
+            raise RailError(f"the tier can't go below the accepted {last.get('tier')}")
+        changed = [name for name, differs in (
+            ("done_contract", new.done_hash() != last.get("done")),
+            ("scope", sorted(new.scope) != last.get("scope_paths")),
+            ("tier", rank(new.tier) > rank(last.get("tier")))) if differs]
+        if not changed:
+            raise RailError(f"the contract of ticket {t.id} matches the accepted one; there is nothing to amend",
+                            code="NOTHING_TO_AMEND")
+        tier = highest(new.tier, last.get("tier"), floor(project, new.scope)[0])
+        if tier != new.tier:
+            text = with_tier(text, tier)
+            new = Ticket(text)
+        needs = "done_contract" in changed and tier not in project.config["auto_tiers"]
+        added_paths = [p for p in new.scope if p not in (last.get("scope_paths") or [])]
+        events.append(event(t.id, "amended", contract=new.contract_hash(), changed=changed, added_paths=added_paths,
+                            needs_approval=needs))
+        if not needs:
+            events.append(accepted_event(t.id, new, tier, "engine", "amend"))
+    ensure_local(project, t)
+    if path:
+        with open(path, "w") as fh:
+            fh.write(text)
+        if gitx.dirty(t.worktree, exclude=[]) and gitx.git(["status", "--porcelain", "--", ticket_path(t.id)],
+                                                         t.worktree).stdout.strip():
+            gitx.git(["add", "--", ticket_path(t.id)], t.worktree)
+            gitx.git(["commit", "--quiet", "-m", f"{t.id}: amend the contract", "--", ticket_path(t.id)], t.worktree)
+    else:
+        old = gitx.rev(t.ref, project.root)
+        new_commit = gitx.commit_files(project.root, old, {ticket_path(t.id): text}, f"{t.id}: amend the contract")
+        gitx.update_ref(project.root, t.ref, new_commit, old)
+    if events:
+        project.append_events(t, events, "amend")
+    elif project.remote:
+        project.push_branch(t.branch)
+    tickets, facts = load(project)
+    return from_facts(facts[t.id])
+
+
+def cmd_consult(project, args):
+    """The consult pack on request: a different model's advice on one question (plan, section 18)."""
+    from . import consult
+
+    if not os.path.exists(consult.pack(project)):
+        raise RailError("the consult pack isn't installed (.rail/packs/consult)", code="NO_PACK")
+    project.sync()
+    tickets, facts = load(project)
+    f = facts[project.find(args.ticket, tickets).id]
+    if f.consults >= consult.LIMIT:
+        raise RailError(f"ticket {f.id} has had its {consult.LIMIT} consults", code="CONSULT_LIMIT")
+    run = steps.Run(project, f.t)
+    ensure_local(project, f.t)
+    advice = consult.ask(project, f, "request", None, args.question, "", run)
+    commit(project, f, run, "consult")
+    tickets, facts = load(project)
+    return from_facts(facts[f.id], run.steps, advice=advice)
 
 
 def cmd_next(project, args):
@@ -284,27 +415,64 @@ def commit_work(project, f, run):
     return True
 
 
-def finish(project, f, run, message):
-    """Commit the run's events, push, and answer from the facts that follow."""
+def commit(project, f, run, message):
+    """Commit a run's events and journal files to the ticket branch, and push."""
     t = f.t
-    if run.events:
+    if run.events or run.files:
         lease = None
         if run.rebased and t.remote_branch:
             # A rebased branch replaces the pushed one; the lease makes sure nobody else pushed meanwhile.
             lease = f"{t.branch}:{gitx.rev(f'refs/remotes/{project.remote}/{t.remote_branch}', project.root)}"
-        project.append_events(t, run.events, message, lease=lease)
+        project.append_events(t, run.events, message, lease=lease, files=run.files)
+        run.events, run.files, run.rebased = [], {}, False
     elif project.remote:
         project.push_branch(t.branch)
+
+
+def after_failure(project, nn, run):
+    """At the retry budget, consult advises once before the agent's last attempt (plan, section 7)."""
+    from . import consult
+
     tickets, facts = load(project)
-    nf = facts[f.id]
-    if run.failure:
-        brief = steps.ship_failed_brief(t, run)
-        return answer(f.id, nf.state, "agent", {"kind": "agent_task", "brief": brief}, "STEP_FAILED",
-                      run.steps, nf.cwd, tier=nf.tier)
-    return from_facts(nf, run.steps)
+    f = facts[nn]
+    if not f.consult_due:
+        return None
+    step, output = run.failure if run.failure else (f.consult_due, "")
+    question = (f"The step '{f.consult_due}' failed {f.attempts.get(f.consult_due)} times. What is wrong, and should the"
+                " agent proceed, change its approach, or stop and ask a person?")
+    advice = consult.ask(project, f, "retry_cap", f.consult_due, question, output, run)
+    commit(project, f, run, "consult")
+    return advice
+
+
+def review_stage(project, f, run):
+    """One review action: the refuter for a disputed finding, or the run of the role the patch still needs."""
+    from . import review
+
+    disputed = f.ledger.disputed()
+    if disputed:
+        return review.run(project, f, "refuter", run, disputed=disputed[0])
+    role = f.ledger.needed_run(f.patch_id, f.tier)
+    return review.run(project, f, role, run) if role else None
+
+
+def merge_stage(project, f, run):
+    """Squash-merge with no remote. When the base moved since ship, rebase and ship again first (plan, section 10)."""
+    base_tip = gitx.rev(project.base_ref, project.root)
+    if not gitx.ok(["merge-base", "--is-ancestor", base_tip, f.t.ref], project.root):
+        steps.ship(project, f, run)
+        commit(project, f, run, "ship" if run.ok else "ship failed")
+        if not run.ok:
+            return None
+        tickets, facts = load(project)
+        f = facts[f.id]
+        if first_match(f)[0] != "MERGE":
+            return None
+    return steps.merge_local(project, f, run)
 
 
 def cmd_advance(project, args):
+    """Run the step the ticket's state calls for: ship, then the review runs it needs, or the merge."""
     project.sync()
     tickets, facts = load(project)
     key = requested(project, args)
@@ -313,46 +481,68 @@ def cmd_advance(project, args):
         if len(mine) != 1:
             raise RailError("which ticket? Run it in the ticket's worktree, or pass --ticket NN")
         key = mine[0].id
-    f = facts[project.find(key, tickets).id]
-    f.explicit = True
-    run = steps.Run(project, f.t)
-
-    if f.state == "implementing" and f.worktree and not f.claimed_elsewhere:
-        if not commit_work(project, f, run):
-            return finish(project, f, run, "ship failed")
+    nn = project.find(key, tickets).id
+    receipts, first = [], True
+    for _ in range(12):
         tickets, facts = load(project)
-        f = facts[f.id]
-        steps.ship(project, f, run)
-        return finish(project, f, run, "ship" if run.ok else "ship failed")
-
-    if f.state == "merge-ready" and f.auto and not project.remote and f.worktree:
-        base_tip = gitx.rev(project.base_ref, project.root)
-        if not gitx.ok(["merge-base", "--is-ancestor", base_tip, f.t.ref], project.root):
-            # The base moved since ship: rebase and ship again before merging (plan, section 10).
-            steps.ship(project, f, run)
-            if not run.ok:
-                return finish(project, f, run, "ship failed")
-            project.append_events(f.t, run.events, "ship")
-            run.events = []
+        f = facts[nn]
+        f.explicit = True
+        code, owner, _ = first_match(f)
+        mine = bool(f.worktree) and not f.claimed_elsewhere
+        run = steps.Run(project, f.t)
+        if f.state == "implementing" and mine and owner == "agent":
+            stage = "ship"
+            if commit_work(project, f, run):
+                tickets, facts = load(project)
+                f = facts[nn]
+                steps.ship(project, f, run)
+        elif code == "REVIEW" and mine:
+            stage = "review"
+            review_stage(project, f, run)
+        elif code == "MERGE" and first and mine and not project.remote:
+            merged = merge_stage(project, f, run)
+            receipts += run.steps
+            if not merged:
+                if run.failure and run.failure[0] == "merge":
+                    return answer(nn, f.state, "human", {"kind": "human_wait", "brief": run.failure[1]}, "MERGE_FAILED",
+                                  receipts, f.cwd, tier=f.tier)
+                break
             tickets, facts = load(project)
-            f = facts[f.id]
-            if f.state != "merge-ready":
-                return from_facts(f, run.steps)
-        merged = steps.merge_local(project, f, run)
-        if not merged:
-            return answer(f.id, f.state, "human", {"kind": "human_wait", "brief": run.failure[1]}, "MERGE_FAILED",
-                          run.steps, f.cwd, tier=f.tier)
+            leftovers = steps.remove_ticket(project, facts[nn].t)
+            tickets, facts = load(project)
+            return from_facts(facts[nn], receipts, leftovers=leftovers, merge_commit=merged)
+        else:
+            if first and f.state == "in-ci":
+                receipts.append({"step": "ci", "status": "unavailable", "detail": "the forge comes in Phase 5"})
+            break
+        first = False
+        commit(project, f, run, stage if run.ok else f"{stage} failed")
+        receipts += run.steps
+        if run.failure and run.failure[1] and run.steps[-1].get("detail") == "timeout":
+            continue  # a review run that timed out is started once more; two in a row wait for a person
+        if run.failure:
+            advice = after_failure(project, nn, run)
+            receipts += [s for s in run.steps if s["step"] == "consult"]
+            tickets, facts = load(project)
+            nf = facts[nn]
+            if stage == "ship":
+                brief = steps.ship_failed_brief(nf.t, run)
+                if advice:
+                    brief += f"\n\n{advice}"
+                code_, owner_, action_ = first_match(nf)
+                if owner_ == "human":
+                    return from_facts(nf, receipts)
+                return answer(nn, nf.state, "agent", {"kind": "agent_task", "brief": brief}, "STEP_FAILED", receipts,
+                              nf.cwd, tier=nf.tier)
+            result = from_facts(nf, receipts)
+            if advice:
+                result["action"]["brief"] += f"\n\n{advice}"
+            return result
         tickets, facts = load(project)
-        leftovers = steps.remove_ticket(project, facts[f.id].t)
-        tickets, facts = load(project)
-        return from_facts(facts[f.id], run.steps, leftovers=leftovers, merge_commit=merged)
-
-    receipts = []
-    if f.state == "reviewing":
-        receipts = [{"step": "review", "status": "unavailable", "detail": "built in Phase 3"}]
-    elif f.state == "in-ci":
-        receipts = [{"step": "ci", "status": "unavailable", "detail": "built in Phase 5"}]
-    return from_facts(f, receipts)
+        if first_match(facts[nn])[0] not in ("REVIEW",):
+            break
+    tickets, facts = load(project)
+    return from_facts(facts[nn], receipts)
 
 
 def cmd_status(project, args):
@@ -489,10 +679,19 @@ def cmd_ci(project, args):
     if project.config["commands"]["setup"]:
         steps.run_command(project, project.root, nn, "setup", project.config["commands"]["setup"], run)
     tier = shipped[-1].get("tier", "LOW")
+    accepted = [e for e in events if e.get("event") == "accepted"]
     if run.ok:
-        needed = steps.check(project, nn, Ticket(text), head, project.root, tier, run, patch_id)
+        needed = steps.check(project, nn, Ticket(text), head, project.root, tier, run, patch_id,
+                             accepted=accepted[-1] if accepted else None)
         if needed is not None and rank(needed) > rank(tier):
             run.record("tier", False, patch_id, f"the change needs {needed}, and it shipped as {tier}")
+    if run.ok and rank(tier) >= rank("MEDIUM"):
+        from .review import Ledger, load_doc
+        from .project import review_path
+        doc = load_doc(gitx.read_blobs([f"{head}:{review_path(nn)}"], project.root).get(f"{head}:{review_path(nn)}"), nn)
+        complete = Ledger(events, doc).complete(patch_id, tier)
+        run.record("review", complete, patch_id, None if complete else "no complete review for this patch",
+                   output="A review bound to this patch, with every finding answered, is missing.")
     code = "CI_PASS" if run.ok else "CI_FAIL"
     brief = "Every check passed." if run.ok else f"Failed at '{run.failure[0]}':\n{run.failure[1]}"
     return answer(nn, code=code, action={"kind": "rest", "brief": brief}, steps_=run.steps, tier=tier)
@@ -560,6 +759,17 @@ def parser():
     drop = verb("drop", "end a ticket without merging it")
     drop.add_argument("--reason", default="")
     drop.add_argument("--by", choices=("agent", "person"), default="agent")
+    answer_ = verb("answer", "record how a review finding ended", ticket=False)
+    answer_.add_argument("ticket", help="ticket ID")
+    answer_.add_argument("finding", help="the finding's id, such as F2")
+    answer_.add_argument("outcome", choices=("fixed", "declined", "parked"))
+    answer_.add_argument("reason", nargs="?", default="", help="what changed, or why")
+    answer_.add_argument("--owner", action="store_true", help="the project's owner decides (a person)")
+    amend = verb("amend", "change a ticket's frozen contract: Done Contract, scope or tier")
+    amend.add_argument("--file", help="the new ticket file, when the ticket has no worktree here")
+    consult_ = verb("consult", "ask the consult pack for advice on one question", ticket=False)
+    consult_.add_argument("ticket", help="ticket ID")
+    consult_.add_argument("question")
     verb("init", "set this project up for Rail", ticket=False)
     verb("doctor", "check the setup and print what's missing", ticket=False)
     verb("ci", "the rail check: the ship checks again on a pull request's head", ticket=False)
@@ -568,9 +778,26 @@ def parser():
     return p
 
 
+def run_pack(argv):
+    """`rail NAME ...` runs a pack's bin/NAME (plan, section 18). None when NAME isn't an installed pack."""
+    if not argv or argv[0] in VERBS or argv[0].startswith("-") or argv[0] == "hook":
+        return None
+    try:
+        root = Project(os.getcwd()).root
+    except RailError:
+        return None
+    command = os.path.join(root, ".rail", "packs", argv[0], "bin", argv[0])
+    if not os.path.exists(command):
+        return None
+    return subprocess.run([command, *argv[1:]], env=dict(os.environ, RAIL_ROOT=root)).returncode
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     as_json = "--json" in argv
+    code = run_pack(argv)
+    if code is not None:
+        return code
     try:
         args = parser().parse_args(argv)
         if getattr(args, "ticket_opt", None):

@@ -8,6 +8,7 @@ from .ticket import TIERS, Ticket, highest, lint, rank
 from .util import globs_overlap, match_any
 
 OPEN = ("implementing", "reviewing", "in-ci", "merge-ready")  # claimed and not finished
+SHIP_STEPS = ("rebase", "ticket-lint", "assumptions", "scope", "rules", "migration", "size", "verify", "checks")
 
 
 def floor(project, scope):
@@ -62,6 +63,9 @@ class Facts:
         self.after_open = []
         self.overlaps = []
         self.open_assumptions = []
+        from .review import Ledger, load_doc
+        self.ledger = Ledger(t.events, load_doc(t.review_text, t.id))
+        self._budgets(project, t.events)
 
         author = self.ticket.tier if self.ticket and self.ticket.tier in TIERS else "LOW"
         if self.accepted:
@@ -73,6 +77,46 @@ class Facts:
             self.tier = author
         self.auto = self.tier in project.config["auto_tiers"]
         self.state = self._state()
+
+    def _budgets(self, project, events):
+        """Retry budgets and the waits derived from the journal (SPEC section 3, and the waits in section 4)."""
+        budget = project.config["retry"]["budget"]
+        attempts, consulted, since = {}, set(), 0
+        accepted_at = amended_at = shipped_at = continued_at = -1
+        for i, e in enumerate(events):
+            kind = e.get("event")
+            if kind == "continued":
+                attempts, consulted, since, continued_at = {}, set(), i, i
+            elif kind == "step" and e.get("status") == "ran":
+                step = e.get("step")
+                if e.get("result") == "pass":
+                    attempts[step] = 0
+                    consulted.discard(step)
+                elif e.get("counted", True):
+                    attempts[step] = attempts.get(step, 0) + 1
+            elif kind == "consulted" and e.get("trigger") == "retry_cap":
+                consulted.add(e.get("step"))
+            elif kind == "accepted":
+                accepted_at = i
+            elif kind == "amended" and e.get("needs_approval"):
+                amended_at = i
+            elif kind == "shipped":
+                shipped_at = i
+        self.consults = sum(1 for e in events if e.get("event") == "consulted")
+        pack = os.path.join(project.root, ".rail", "packs", "consult", "bin", "consult")
+        can_consult = os.path.exists(pack) and self.consults < 3
+        self.attempts = attempts
+        self.consult_due = next((s for s, n in attempts.items() if n >= budget and s not in consulted and can_consult), None)
+        self.capped = [s for s, n in attempts.items()
+                       if (s in consulted and n > budget) or (s not in consulted and n >= budget and not can_consult)]
+        runs = [e for e in events[since:] if e.get("event") == "step" and e.get("step") in ("review", "security", "refuter")]
+        self.stuck_review = len(runs) >= 2 and all(e.get("detail") == "timeout" for e in runs[-2:])
+        self.amend_pending = amended_at > accepted_at
+        self.merge_approved = continued_at > shipped_at >= 0
+        # A person's note from `accept` goes into the agent's briefs until the next ship (plan, section 10).
+        notes = [(i, e) for i, e in enumerate(events) if e.get("note") and (
+            e.get("event") == "continued" or (e.get("event") == "accepted" and e.get("by") == "person"))]
+        self.person_note = notes[-1][1]["note"] if notes and notes[-1][0] > shipped_at else None
 
     @property
     def worktree(self):
@@ -116,15 +160,15 @@ class Facts:
         # The last word on the current patch: a shipped event, or a ship step that failed.
         verdicts = [e for e in t.events if e.get("patch_id") == self.patch_id and (
             e.get("event") == "shipped" or (e.get("event") == "step" and e.get("result") == "fail"
-                                            and e.get("step") != "setup"))]
+                                            and e.get("step") in SHIP_STEPS))]
         if verdicts and verdicts[-1].get("event") == "shipped":
             self.shipped = verdicts[-1]
         elif verdicts:
             self.last_fail = verdicts[-1]
         if self.dirty or not self.shipped:
             return "implementing"
-        if self.needs_review:
-            return "reviewing"  # Phase 1: no review is ever complete; the reviewer comes in Phase 3
+        if self.needs_review and not self.ledger.complete(self.patch_id, self.tier):
+            return "reviewing"
         if project.remote:
             return "in-ci"      # Phase 1: CI and the merge go through the forge, built in Phase 5
         return "merge-ready"

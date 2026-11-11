@@ -23,6 +23,14 @@ def events_path(nn):
     return f".rail/journal/{nn}-events.jsonl"
 
 
+def review_path(nn):
+    return f".rail/journal/{nn}-review.json"
+
+
+def advice_path(nn):
+    return f".rail/journal/{nn}-advice.md"
+
+
 def event(ticket_id, name, **fields):
     record = {"v": 1, "at": now_iso(), "ticket": ticket_id, "event": name}
     record.update(fields)
@@ -51,6 +59,7 @@ class TicketInfo:
         self.ref = None            # the ref the ticket and journal are read from
         self.ticket = None
         self.events = []
+        self.review_text = None    # NN-review.json, the stored review runs
         self.merged = None         # the squash commit on base
         self.id_taken = False      # rail/id/NN on the remote, or the mkdir without one
         self.worktree = None
@@ -146,7 +155,7 @@ class Project:
             elif t.remote_branch:
                 t.ref = f"refs/remotes/{self.remote}/{t.remote_branch}"
             source = t.ref or base
-            specs += [f"{source}:{ticket_path(nn)}", f"{source}:{events_path(nn)}"]
+            specs += [f"{source}:{ticket_path(nn)}", f"{source}:{events_path(nn)}", f"{source}:{review_path(nn)}"]
         blobs = gitx.read_blobs(specs, self.root)
         self.orphans = []
         for nn, t in list(found.items()):
@@ -154,6 +163,7 @@ class Project:
             text = blobs.get(f"{source}:{ticket_path(nn)}")
             t.ticket = Ticket(text) if text is not None else None
             t.events = parse_events(blobs.get(f"{source}:{events_path(nn)}"))
+            t.review_text = blobs.get(f"{source}:{review_path(nn)}")
             if t.ticket is None and not t.merged and not t.id_taken:
                 # A branch named like a ticket that belongs to no ticket: listed for the person, never touched.
                 self.orphans.append(t.name)
@@ -185,14 +195,6 @@ class Project:
         result = gitx.git(["patch-id", "--stable"], self.root, input=diff).stdout.split()
         return result[0] if result else ""
 
-    def size(self, ref):
-        total = 0
-        numstat = gitx.out(["diff", "--numstat", "-M", f"{self.base_ref}...{ref}", *PRODUCT_SPEC], self.root)
-        for line in numstat.splitlines():
-            added, deleted = line.split("\t")[:2]
-            total += (int(added) if added.isdigit() else 0) + (int(deleted) if deleted.isdigit() else 0)
-        return total
-
     # --- writing ---------------------------------------------------------------
 
     def push_branch(self, branch, lease=None):
@@ -200,21 +202,21 @@ class Project:
             return "unavailable"
         return gitx.push(self.root, self.remote, f"refs/heads/{branch}:refs/heads/{branch}", lease)
 
-    def append_events(self, t, events, message, lease=None):
-        """Commit events to the ticket branch without touching any checkout, then push.
-
-        Returns the push result: 'ok', 'rejected' or 'unavailable'.
+    def append_events(self, t, events, message, lease=None, files=None):
+        """Commit events (and whole journal files such as NN-review.json) to the ticket branch, without touching any
+        checkout, then push. Returns the push result: 'ok', 'rejected' or 'unavailable'.
         """
         path = events_path(t.id)
         ref = f"refs/heads/{t.branch}"
         old = gitx.rev(ref, self.root)
         existing = gitx.read_blobs([f"{old}:{path}"], self.root)[f"{old}:{path}"] or ""
         text = existing + "".join(json.dumps(e, separators=(",", ":")) + "\n" for e in events)
-        new = gitx.commit_files(self.root, old, {path: text}, f"{t.id}: {message}")
+        writes = {path: text, **(files or {})}
+        new = gitx.commit_files(self.root, old, writes, f"{t.id}: {message}")
         if not gitx.update_ref(self.root, ref, new, old):
             raise RailError(f"branch {t.branch} moved while the journal was written; run the command again")
         if t.worktree:
-            gitx.git(["checkout", "HEAD", "--", path], t.worktree)
+            gitx.git(["checkout", "HEAD", "--", *writes], t.worktree)
         t.events.extend(events)
         return self.push_branch(t.branch, lease)
 

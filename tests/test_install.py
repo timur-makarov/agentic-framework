@@ -177,7 +177,7 @@ class CI(RailTest):
         passed = self.ci(self.checkout(p, "1-fix-add"), "1-fix-add", expect=0)
         self.assertEqual(passed["reason"]["code"], "CI_PASS")
         self.assertEqual([s["step"] for s in passed["steps"]],
-                         ["shipped", "ticket-lint", "assumptions", "scope", "verify", "checks"])
+                         ["shipped", "ticket-lint", "assumptions", "scope", "rules", "size", "verify", "checks"])
 
     def test_a_pr_with_no_ticket_gets_verify_and_its_tier(self):
         p = self.fixture()

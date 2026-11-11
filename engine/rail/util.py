@@ -80,22 +80,25 @@ def globs_overlap(a, b):
     return globmatch(a, b) or globmatch(b, a)
 
 
-def run_shell(command, cwd, env_extra=None, timeout=None):
-    """Run a command through sh. Returns (exit code or None on timeout, output, duration in ms)."""
+def run_shell(command, cwd, env_extra=None, timeout=None, stdin=None):
+    """Run a command through sh, with `stdin` as its input. Returns (exit code or None on timeout, output, ms)."""
     env = dict(os.environ)
     env.update(env_extra or {})
     start = time.monotonic()
     proc = subprocess.Popen(
-        ["sh", "-c", command], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True,
+        ["sh", "-c", command], cwd=cwd, env=env, stdin=subprocess.DEVNULL if stdin is None else subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE if stdin is not None else subprocess.STDOUT, text=True,
+        start_new_session=True,
     )
     try:
-        output, _ = proc.communicate(timeout=timeout)
+        output, errors = proc.communicate(input=stdin, timeout=timeout)
         code = proc.returncode
     except subprocess.TimeoutExpired:
         os.killpg(proc.pid, signal.SIGKILL)
-        output, _ = proc.communicate()
+        output, errors = proc.communicate()
         code = None
+    if code != 0 and errors:  # with stdin, stderr is kept apart so stdout stays clean JSON
+        output = (output or "") + errors
     return code, output or "", int((time.monotonic() - start) * 1000)
 
 

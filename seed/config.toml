@@ -28,3 +28,17 @@ after = 20                                # reader: next; LOW tickets and ticket
 [map]
 depth = 1                                 # reader: doc-lint; the directory depth ## Areas must cover
 ignore = []
+
+[review]                                  # reader: advance; runs in the ticket's worktree with the brief on stdin
+# the command runs through sh; --json-schema takes the schema's text, not a path. The engine resets the worktree afterwards
+command = '''claude -p --safe-mode --system-prompt-file .rail/engine/reviewer.md --tools Read,Grep,Glob,Bash,Edit,Write --allowedTools Bash,Edit,Write --disallowedTools 'Bash(git push *)' --output-format json --json-schema "$(cat .rail/engine/review-v1.json)"'''
+
+[consult]                                 # reader: the consult pack; read-only, with the brief on stdin
+command = "claude -p --safe-mode --tools Read,Grep,Glob"
+                                          # point it at another vendor's CLI when you have one; claude is labelled same-model
+
+[[rules]]                                 # reader: ship and CI; structure rules on added lines (section 12)
+id = "no-new-suppressions"
+forbid = ["eslint-disable", "@ts-ignore", "# noqa", ".skip("]
+allow = []
+fix = "Fix the cause instead of silencing the check."

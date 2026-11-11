@@ -88,6 +88,10 @@ class Ticket:
         lines = self.sections.get("Assumptions", "").splitlines()
         return [m.group(1).strip() for m in map(_ASSUMED.match, lines) if m]
 
+    def done_hash(self):
+        """The Done Contract alone, so `amend` can tell what changed."""
+        return hashlib.sha256(" ".join(self.sections.get("Done Contract", "").split()).encode()).hexdigest()[:12]
+
     def contract_hash(self):
         """SPEC section 3: SHA-256 of the Done Contract and the sorted scope_paths, whitespace normalised."""
         done = " ".join(self.sections.get("Done Contract", "").split())
@@ -152,6 +156,16 @@ def with_id(text, ticket_id):
     end = next(i for i in range(1, len(lines)) if lines[i].strip() == "+++")
     front = [l for l in lines[1:end] if not re.match(r"^\s*id\s*=", l)]
     return "\n".join(["+++", f'id = "{ticket_id}"', *front, *lines[end:]])
+
+
+def with_tier(text, tier):
+    """The ticket text with its tier raised to `tier` (the engine may only raise it)."""
+    lines = text.split("\n")
+    end = next(i for i in range(1, len(lines)) if lines[i].strip() == "+++")
+    for i in range(1, end):
+        if re.match(r"^\s*tier\s*=", lines[i]):
+            lines[i] = re.sub(r'=\s*"[^"]*"', f'= "{tier}"', lines[i], count=1)
+    return "\n".join(lines)
 
 
 def slug(title):

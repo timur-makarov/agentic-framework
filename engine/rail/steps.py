@@ -4,17 +4,11 @@ import os
 import shutil
 from pathlib import Path
 
-from . import gitx
+from . import gitx, rules
 from .project import event, events_path, ticket_path
 from .state import raised_tier
 from .ticket import Ticket, lint, rank
 from .util import match_any, run_shell, tail
-
-LOCKFILES = {
-    "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb", "poetry.lock", "uv.lock", "Pipfile.lock",
-    "Cargo.lock", "go.sum", "Gemfile.lock", "composer.lock",
-}
-
 
 class Run:
     """The receipt of one command: the steps it ran, their events, and the first failure."""
@@ -22,20 +16,27 @@ class Run:
     def __init__(self, project, t):
         self.project, self.t = project, t
         self.steps, self.events = [], []
+        self.files = {}      # journal files to commit with the events: the review runs, the advice
         self.failure = None  # (step, output)
         self.rebased = False
+        self.size = None
 
-    def record(self, step, passed, patch_id=None, detail=None, duration_ms=None, output="", status="ran"):
+    def record(self, step, passed, patch_id=None, detail=None, duration_ms=None, output="", status="ran",
+               counted=True, cost_usd=None):
         receipt = {"step": step, "status": status}
         if status == "ran":
             receipt["result"] = "pass" if passed else "fail"
             fields = {"step": step, "status": status, "result": receipt["result"]}
             if patch_id is not None:
                 fields["patch_id"] = patch_id
+            if not counted:
+                fields["counted"] = False
             if detail:
                 fields["detail"] = detail
             if duration_ms is not None:
                 fields["duration_ms"] = duration_ms
+            if cost_usd is not None:
+                fields["cost_usd"] = cost_usd
             self.events.append(event(self.t.id, "step", **fields))
         if detail:
             receipt["detail"] = detail
@@ -93,7 +94,7 @@ def setup(project, t, run, cwd=None):
 
 # --- ship and CI -------------------------------------------------------------------
 
-CHECKS = ["ticket-lint", "assumptions", "scope", "migration", "verify", "checks"]
+CHECKS = ["ticket-lint", "assumptions", "scope", "rules", "migration", "size", "verify", "checks"]
 
 
 def _stop(run, step):
@@ -101,12 +102,19 @@ def _stop(run, step):
     return None
 
 
-def check(project, nn, ticket, ref, cwd, tier, run, patch_id):
+def check(project, nn, ticket, ref, cwd, tier, run, patch_id, accepted=None):
     """The checks ship and CI share, in order, stopping at the first failure.
 
     Returns the tier the change needs (it may rise), or None when a check failed.
     """
     errors = lint(ticket, expect_id=nn)
+    if accepted and not errors:
+        # The contract and tier freeze at acceptance (plan, section 5): only `rail amend` changes them.
+        if ticket.contract_hash() != accepted.get("contract"):
+            errors.append(f"the contract (Done Contract and scope_paths) differs from the accepted one; change it with"
+                          f" rail amend {nn}")
+        if rank(ticket.tier) < rank(accepted.get("tier")):
+            errors.append(f"the tier is {ticket.tier}, below the accepted {accepted.get('tier')}; tiers only go up")
     if not run.record("ticket-lint", not errors, patch_id, "; ".join(errors) or None, output="\n".join(errors)):
         return _stop(run, "ticket-lint")
 
@@ -120,6 +128,15 @@ def check(project, nn, ticket, ref, cwd, tier, run, patch_id):
     if not run.record("scope", not outside, patch_id, f"outside scope: {', '.join(outside)}" if outside else None,
                       output=f"These files are outside scope_paths ({', '.join(ticket.scope)}):\n" + "\n".join(outside)):
         return _stop(run, "scope")
+
+    broken = rules.violations(project, ref, cwd)
+    if not project.config["rules"]:
+        run.not_run("rules")
+    elif not run.record("rules", not broken, patch_id,
+                      f"{len(broken)} broken: {broken[0][0]['id']}" if broken else None,
+                      output="\n".join(f"{path} {what}. Rule {rule['id']}: {rule.get('fix', '')}"
+                                       for rule, path, what in broken)):
+        return _stop(run, "rules")
 
     needed, reason = raised_tier(project, changed)
     if rank(needed) > rank(tier):
@@ -136,6 +153,16 @@ def check(project, nn, ticket, ref, cwd, tier, run, patch_id):
                           output=f"This ticket changes migrations ({', '.join(migrations)}). Set {' and '.join(missing)}"
                                  " in the front matter: expand then contract, write the down step, test the rollback."):
             return _stop(run, "migration")
+
+    count, _ = rules.size(project, ref, cwd)
+    cap = project.config["size"].get(tier)
+    run.record("size", True, patch_id, f"size {count}/{cap}" if cap else f"size {count}")
+    sized = rules.size_tier(project, tier, count)
+    if rank(sized) > rank(tier):
+        run.events.append(event(nn, "tier_raised", **{"from": tier, "to": sized, "reason": "size",
+                                                     "detail": f"{count} changed lines, over the {tier} cap of {cap}"}))
+        tier = sized
+    run.size = count
 
     verify = project.config["commands"]["verify"]
     if verify:
@@ -172,11 +199,11 @@ def ship(project, f, run):
 
     patch_id = project.patch_id(ref)
     text = gitx.read_blobs([f"{ref}:{ticket_path(t.id)}"], project.root)[f"{ref}:{ticket_path(t.id)}"]
-    tier = check(project, t.id, Ticket(text or ""), ref, wt, f.tier, run, patch_id)
+    tier = check(project, t.id, Ticket(text or ""), ref, wt, f.tier, run, patch_id, accepted=f.accepted)
     if tier is None:
         return run
     head = gitx.rev(ref, project.root)
-    run.events.append(event(t.id, "shipped", patch_id=patch_id, head=head[:12], tier=tier, size=project.size(ref)))
+    run.events.append(event(t.id, "shipped", patch_id=patch_id, head=head[:12], tier=tier, size=run.size))
     return run
 
 
@@ -206,8 +233,16 @@ def describe(project, t, ticket, tier):
             continue
         name = f"check: {e.get('detail')}" if e.get("step") == "checks" else e.get("step")
         rows.append(f"| {name} | {e.get('status')}, {e.get('result')} |")
+    from .review import Ledger, load_doc
+    ledger = Ledger(t.events, load_doc(t.review_text, t.id))
+    for role in ("review", "security"):
+        if ledger.runs(role):
+            own = [fid for fid, x in ledger.findings.items() if x.get("role") == role]
+            open_ = [fid for fid in own if ledger.outcome(fid) == "open"]
+            said = (f"{len(own)} findings, " + ("all answered" if not open_ else f"{len(open_)} open")) if own else "no findings"
+            rows.append(f"| {role} | ran, {len(ledger.runs(role))} runs, {said} |")
     changed = project.changed_files(t.ref)
-    lockfiles = [p for p in changed if os.path.basename(p) in LOCKFILES]
+    lockfiles = [p for p in changed if os.path.basename(p) in rules.LOCKFILES]
     migrations = "No migrations." if not ticket.get("reversibility") else (
         f"Migrations: {ticket.get('reversibility')}; rollback: {ticket.get('rollback')}.")
     risk = (f"{tier}. Touches {', '.join(ticket.scope)}. {migrations} "
