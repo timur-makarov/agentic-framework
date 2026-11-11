@@ -64,9 +64,12 @@ def guard():
     except RailError:
         return 0  # not a Rail project
     branch = gitx.git(["rev-parse", "--abbrev-ref", "HEAD"], cwd, check=False).stdout.strip()
-    reason = rules.deny(command, project.base, branch)
+    top = gitx.git(["rev-parse", "--show-toplevel"], cwd, check=False).stdout.strip() or project.root
+    reason, decision = rules.deny(command, project.base, branch), "deny"
+    if not reason:
+        reason, decision = rules.ask(command, cwd, top), "ask"
     if reason:
-        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
                                                  "permissionDecisionReason": f"Rail guard: {reason}."}}))
     return 0
 

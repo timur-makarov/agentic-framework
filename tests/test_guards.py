@@ -94,3 +94,28 @@ class DenyMore(RailTest):
                         "grep shipped .rail/journal/*.jsonl", "git show HEAD:.rail/journal/1-review.json",
                         "echo environment > notes.txt", "echo x 2>&1 | tee -a log < .rail/journal/a"):
             self.assertIsNone(decide(p, command), command)
+
+
+class Ask(RailTest):
+    def test_the_person_answers_before_sudo_hard_resets_cleans_and_rm_outside_the_worktree(self):
+        p = self.fixture()
+        for command in ("sudo apt-get install -y jq", "FOO=1 sudo apt-get install jq", "env sudo rm x",
+                        "time sudo ls", "nohup sudo reboot", "git reset --hard HEAD~1", "git clean -fd", "git clean -xdf",
+                        "git clean --force", "rm -rf ../other", "rm -r /tmp/cache", "rm -rf ~/notes",
+                        "cd . && rm -rf $HOME/build", "cd .. && rm -rf other", "cd /tmp && rm -rf build",
+                        'rm -rf "$PWD/../other"', 'rm -rf "$RAIL_UNSET_PREFIX/"', "D=/tmp/x; rm -rf $D"):
+            self.assertEqual(decide(p, command), "ask", command)
+        for command in ("git reset --soft HEAD~1", "git clean -n", "rm -rf build", "rm -r ./src/old",
+                        "rm notes.txt", "rm -rf src/../api"):
+            self.assertIsNone(decide(p, command), command)
+
+    def test_a_symlinked_working_directory_is_still_inside(self):
+        p = self.fixture()
+        link = os.path.join(self.tmp, "link")
+        os.symlink(p.root, link)
+        self.assertIsNone(decide(p, "rm -rf build", cwd=link))
+        self.assertIsNone(decide(p, "cd src && rm -rf old", cwd=link))
+
+    def test_a_deny_wins_over_an_ask(self):
+        p = self.fixture()
+        self.assertEqual(decide(p, "sudo git push -f"), "deny")

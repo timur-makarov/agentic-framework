@@ -12,8 +12,10 @@ WRAPPERS = {"sudo", "env", "command", "exec", "time", "nohup", "nice"}
 SEPARATORS = {";", "&&", "||", "|", "&", "|&"}
 
 
-def pipelines(line):
-    """Each line's pipelines, as lists of simple commands (word lists). ;, &&, || and & end a pipeline; | joins one."""
+def pipelines(line, unwrap=True):
+    """Each line's pipelines, as lists of simple commands (word lists). ;, &&, || and & end a pipeline; | joins one.
+    With unwrap, `sudo`, `env`, VAR=value and the like are dropped from the front of each command."""
+    keep = _unwrap if unwrap else (lambda words: words)
     found = []
     for part in line.splitlines():
         lexer = shlex.shlex(part, posix=True, punctuation_chars=True)
@@ -25,15 +27,15 @@ def pipelines(line):
         pipeline, words = [], []
         for token in tokens:
             if token in ("|", "|&"):
-                pipeline.append(_unwrap(words))
+                pipeline.append(keep(words))
                 words = []
             elif token in SEPARATORS:
-                pipeline.append(_unwrap(words))
+                pipeline.append(keep(words))
                 found.append(pipeline)
                 pipeline, words = [], []
             elif not set(token) <= set("()"):
                 words.append(token)
-        pipeline.append(_unwrap(words))
+        pipeline.append(keep(words))
         found.append(pipeline)
     return [[words for words in pipeline if words] for pipeline in found]
 
@@ -223,3 +225,47 @@ def deny(line, base, branch):
             if len(words) > 1 and words[1] == "api" and any("/merge" in w and "/pulls/" in w for w in words[2:]):
                 return "a merge through gh api goes around the engine: rail advance merges a shipped ticket"
     return None
+
+
+def _resolve(target, cwd):
+    """A path as the shell would see it: variables from the hook's environment (the agent's), then ~."""
+    path = os.path.expanduser(os.path.expandvars(target))
+    return os.path.realpath(os.path.join(cwd, path))
+
+
+def _outside(target, cwd, top):
+    """Whether a path an rm -r names lies outside the worktree. Real paths, so a symlinked /tmp agrees.
+    A variable the hook can't expand could point anywhere, so it counts as outside."""
+    if "$" in os.path.expandvars(target) or "$" in cwd:
+        return True
+    path, top = _resolve(target, cwd), os.path.realpath(top)
+    return path != top and not path.startswith(top.rstrip("/") + "/")
+
+
+def ask(line, cwd, top):
+    """Why the person should answer before a command runs, or None (plan, section 15)."""
+    for pipeline in pipelines(line, unwrap=False):
+        for words in pipeline:
+            prefix = words[:len(words) - len(_unwrap(words))]  # sudo, env, time, VAR=value and their options
+            if "sudo" in prefix:
+                return "sudo runs as root"
+    for words in commands(line):
+        if not words:
+            continue
+        if words[0] == "cd":  # follow cd through the line: cd .. && rm -rf other is outside
+            cwd = _resolve(words[1] if len(words) > 1 and words[1] != "-" else "~", cwd)
+        elif words[0] == "git":
+            sub, args = _git(words)
+            if sub == "reset" and "--hard" in args:
+                return "git reset --hard throws away uncommitted work"
+            if sub == "clean" and ("--force" in args or "f" in _short_flags(args, "clean")):
+                return "git clean -f deletes untracked files"
+        elif words[0] == "rm":
+            recursive = any(w in ("-r", "-R", "--recursive") or (w.startswith("-") and not w.startswith("--")
+                                                                and set("rR") & set(w)) for w in words[1:])
+            targets = [w for w in words[1:] if not w.startswith("-")]
+            outside = [t for t in targets if _outside(t, cwd, top)]
+            if recursive and outside:
+                return f"rm -r outside the worktree: {', '.join(outside)}"
+    return None
+
