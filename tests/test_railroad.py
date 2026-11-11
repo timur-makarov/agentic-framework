@@ -359,7 +359,7 @@ class Remote(RailTest):
         a.rail("next", session="a")
         a.fix_calc("1")
         shipped = a.rail("advance", "1", session="a")
-        self.assertEqual((shipped["state"], shipped["reason"]["code"]), ("in-ci", "CI_UNAVAILABLE"))
+        self.assertEqual((shipped["state"], shipped["reason"]["code"]), ("in-ci", "FORGE_UNAVAILABLE"))
         self.assertEqual(b.rail("status")["tickets"][0]["state"], "in-ci")
         self.assertIn("shipped", b.git("show", "origin/1-fix-add:.rail/journal/1-events.jsonl"))
 

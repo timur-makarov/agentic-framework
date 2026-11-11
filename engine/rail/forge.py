@@ -109,3 +109,129 @@ def create_labels(repo):
             api("POST", f"repos/{repo}/labels", {"name": name, "color": color, "description": description})
             created.append(name)
     return created
+
+
+class Forge:
+    """The GitHub side of the tickets, read once per command (plan, sections 7, 10 and 11).
+
+    `ok` is False when there is no GitHub remote or the remote can't be reached; the steps that need the forge
+    then report `unavailable`, and state comes from git and the journal alone.
+    """
+
+    def __init__(self, project):
+        self.project = project
+        self.repo = github_repo(project) if project.remote else None
+        self.ok = bool(self.repo) and project.online
+        self._pulls = None
+        self._full = {}
+        self._checks = {}
+        self._required = None
+
+    def call(self, method, path, body=None):
+        return api(method, f"repos/{self.repo}/{path}", body)
+
+    # --- pull requests ----------------------------------------------------------
+
+    def pulls(self):
+        """{head branch: the newest PR from it}."""
+        if self._pulls is None:
+            self._pulls = {}
+            try:
+                for pr in self.call("GET", "pulls?state=all&per_page=100&sort=created&direction=desc") or []:
+                    self._pulls.setdefault(pr["head"]["ref"], pr)
+            except ForgeError:
+                self.ok = False
+        return self._pulls
+
+    def pr(self, branch):
+        if not self.ok or not branch:
+            return None
+        pr = self.pulls().get(branch)
+        if pr and pr.get("state") == "open" and pr["number"] not in self._full:
+            try:
+                self._full[pr["number"]] = self.call("GET", f"pulls/{pr['number']}")
+            except ForgeError:
+                self._full[pr["number"]] = pr
+        return self._full.get(pr["number"], pr) if pr else None
+
+    def open_pr(self, branch, title, body):
+        pr = self.call("POST", "pulls", {"title": title, "head": branch, "base": self.project.base, "body": body})
+        self.pulls()[branch] = pr
+        return pr
+
+    def update_pr(self, number, **fields):
+        return self.call("PATCH", f"pulls/{number}", fields)
+
+    def labels(self, pr):
+        return {label["name"] for label in (pr or {}).get("labels", [])}
+
+    def add_labels(self, number, names):
+        self.call("POST", f"issues/{number}/labels", {"labels": list(names)})
+
+    def remove_label(self, number, name):
+        try:
+            self.call("DELETE", f"issues/{number}/labels/{name}")
+        except ForgeError as e:
+            if e.status != 404:
+                raise
+
+    def comments(self, number):
+        return self.call("GET", f"issues/{number}/comments?per_page=100") or []
+
+    def comment(self, number, body):
+        self.call("POST", f"issues/{number}/comments", {"body": body})
+
+    def merge(self, number, sha, title, message):
+        """The async merge endpoint: squash, the head pinned with sha. Returns (requested, why not)."""
+        try:
+            self.call("PUT", f"pulls/{number}/merge-async", {"merge_method": "squash", "sha": sha,
+                                                             "commit_title": title, "commit_message": message})
+            return True, None
+        except ForgeError as e:
+            return False, str(e)
+
+    # --- checks -----------------------------------------------------------------------
+
+    def required(self):
+        """The contexts the base branch requires; `rail` when none are set."""
+        if self._required is None:
+            contexts = set()
+            try:
+                for rule in self.call("GET", f"rules/branches/{self.project.base}") or []:
+                    if rule.get("type") == "required_status_checks":
+                        contexts |= {c.get("context") for c in rule.get("parameters", {}).get("required_status_checks", [])}
+            except ForgeError:
+                pass
+            try:
+                protection = self.call("GET", f"branches/{self.project.base}/protection/required_status_checks") or {}
+                contexts |= set(protection.get("contexts", []))
+            except ForgeError:
+                pass
+            self._required = contexts or {"rail"}
+        return self._required
+
+    def checks(self, sha):
+        """(state, failing): 'green' when every required check passed, 'red' when one failed, else 'pending'.
+        `failing` lists (name, summary) for the brief."""
+        if sha not in self._checks:
+            runs = (self.call("GET", f"commits/{sha}/check-runs?per_page=100") or {}).get("check_runs", [])
+            latest = {}
+            for run in runs:
+                latest.setdefault(run.get("name"), run)
+            failing, waiting = [], False
+            for name in self.required():
+                run = latest.get(name)
+                if not run or run.get("status") != "completed":
+                    waiting = True
+                elif run.get("conclusion") not in ("success", "neutral", "skipped"):
+                    output = run.get("output") or {}
+                    failing.append((name, "\n".join(x for x in (output.get("title"), output.get("summary"),
+                                                                  output.get("text")) if x)[:3000]))
+            self._checks[sha] = ("red" if failing else "pending" if waiting else "green", failing)
+        return self._checks[sha]
+
+    # --- issues -------------------------------------------------------------------------
+
+    def issues(self, label="rail"):
+        found = self.call("GET", f"issues?labels={label}&state=open&per_page=100") or []
+        return [i for i in found if "pull_request" not in i]

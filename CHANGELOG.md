@@ -37,3 +37,8 @@ One line for each change, saying why.
 - Give a fresh retry budget when a person approves a ticket or an amend, as with any other continue, because plan section 10 says a person's act resets it.
 - Add the docs pages for guards, packs, ADRs, environments and working away from the desk, so a project can run Rail day to day from rail docs.
 - Record the checkpoint after Phase 3 and the live guard check in section 25 of the plan, so later phases rest on what running real tickets showed.
+- Add the forge, which talks to GitHub only through gh api REST calls: PRs open at add (a contract PR outside auto_tiers) or at claim, take the ticket's title and description at ship, and auto tiers merge through the async merge endpoint once the required checks are green, so tickets reach main without a person.
+- Derive the forge's states: a PR closed without a merge drops its ticket, a conflict or a red required check returns it to implementing with the check's output, a PR behind its base is rebased with no agent work, and a requested merge is noted in the local cache.
+- Make labels the person's controls: rail:needs-you marks every wait (one saved search is the inbox) and holds a ticket when a person adds it, and rail:go approves a contract or continues any wait, with the PR's comments in the agent's next brief.
+- When only CI waits remain, next returns gh run watch for the PR's run, then rail next, so nothing polls.
+- Add a fake GitHub to the tests (tests/fake_gh.py), so the pull-request lifecycle is tested end to end without a network.

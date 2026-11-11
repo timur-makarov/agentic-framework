@@ -197,6 +197,24 @@ class Project:
 
     # --- writing ---------------------------------------------------------------
 
+    def cache_read(self, kind, key):
+        """The local cache, keyed by ticket, in the git common dir (plan, section 3): notes nothing else needs."""
+        path = os.path.join(self.common, "rail", "cache", kind, key)
+        if not os.path.exists(path):
+            return None
+        with open(path) as f:
+            return f.read().strip() or None
+
+    def cache_write(self, kind, key, value):
+        path = os.path.join(self.common, "rail", "cache", kind, key)
+        if value is None:
+            if os.path.exists(path):
+                os.remove(path)
+            return
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(value)
+
     def _lease_note(self, branch):
         return os.path.join(self.common, "rail", "cache", "leases", branch.replace("/", "%"))
 

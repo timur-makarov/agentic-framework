@@ -66,6 +66,14 @@ class Facts:
         from .review import Ledger, load_doc
         self.ledger = Ledger(t.events, load_doc(t.review_text, t.id))
         self._budgets(project, t.events)
+        # The forge's side: the ticket's PR, its labels, CI on its head, and a merge the engine requested.
+        forge = getattr(project, "forge", None)
+        self.forge = forge if forge is not None and forge.ok else None
+        self.pr = self.forge.pr(t.name) if self.forge and t.name else None
+        self.labels = self.forge.labels(self.pr) if self.pr else set()
+        self.ci, self.ci_failing, self.conflict, self.behind, self.pushed = None, [], False, False, None
+        self.merge_note = project.cache_read("merge", t.id)
+        self.red_base = None
 
         author = self.ticket.tier if self.ticket and self.ticket.tier in TIERS else "LOW"
         if self.accepted:
@@ -139,12 +147,18 @@ class Facts:
     def needs_review(self):
         return rank(self.tier) >= rank("MEDIUM")
 
+    @property
+    def pr_open(self):
+        return bool(self.pr) and self.pr.get("state") == "open"
+
     def _state(self):
         t, project = self.t, self.project
-        if t.merged:
+        if t.merged or (self.pr and self.pr.get("merged")):
             return "merged"
         if self.dropped_event or not t.name:
             return "dropped"  # a dropped event, or the ID ref is all that is left (SPEC, section 4)
+        if self.pr and self.pr.get("state") == "closed":
+            return "dropped"  # the PR was closed without a merge
         if not self.accepted:
             return "new"
         if not self.claimed:
@@ -172,10 +186,23 @@ class Facts:
             self.last_fail = verdicts[-1]
         if self.dirty or not self.shipped:
             return "implementing"
+        red = project.cache_read("red-base", "base")
+        if red and red == gitx.rev(project.base_ref, project.root):
+            self.red_base = red
+        if self.pr_open:
+            # The engine reads CI only once the ticket has shipped this patch, and only on the head it pushed.
+            tip = gitx.rev(t.ref, project.root)
+            self.pushed = self.pr["head"]["sha"] == tip
+            self.conflict = self.pr.get("mergeable_state") == "dirty"
+            self.behind = self.pr.get("mergeable_state") == "behind"
+            if self.pushed:
+                self.ci, self.ci_failing = self.forge.checks(tip)
+            if self.conflict or self.ci == "red":
+                return "implementing"  # a red required check or a conflict with base returns the ticket
         if self.needs_review and not self.ledger.complete(self.patch_id, self.tier):
             return "reviewing"
-        if project.remote:
-            return "in-ci"      # Phase 1: CI and the merge go through the forge, built in Phase 5
+        if project.remote and not (self.pr_open and self.pushed and self.ci == "green"):
+            return "in-ci"
         return "merge-ready"
 
 

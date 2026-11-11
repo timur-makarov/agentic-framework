@@ -6,7 +6,8 @@ consult); `next` makes the move, derives the facts again, and reads the table on
 
 from .project import ticket_path
 
-TRANSITIONS = {"ACCEPT_AUTO", "CLAIM", "RESUME", "CONSULT"}
+TRANSITIONS = {"ACCEPT_AUTO", "CLAIM", "RESUME", "CONSULT", "GO", "REBASE_BEHIND"}
+MERGE_PATIENCE = 600  # seconds a requested merge may take before a person looks
 OPEN = ("implementing", "reviewing", "in-ci", "merge-ready")
 
 
@@ -109,9 +110,31 @@ def _capped(f):
             f" rail accept {f.id} \"what to do differently\". That gives a fresh budget.")
 
 
+def _pr(f):
+    return f"PR #{f.pr['number']} ({f.pr['html_url']})" if f.pr else "its pull request"
+
+
+def _red_check(f):
+    lines = [f"A required check failed on {_pr(f)}. Fix the cause in {f.cwd}, then run: rail advance {f.id}"]
+    for name, summary in f.ci_failing:
+        lines += ["", f"{name}:", summary or "(no output; open the check on GitHub)"]
+    return "\n".join(lines) + _findings(f, "Open review findings:") + _note(f)
+
+
+def _merge_requested(f):
+    sha, _, at = (f.merge_note or "").partition(" ")
+    return sha == (f.pr or {}).get("head", {}).get("sha") and f.pr_open
+
+
+def _merge_stale(f):
+    import time
+    sha, _, at = (f.merge_note or "").partition(" ")
+    return _merge_requested(f) and at.isdigit() and time.time() - int(at) > MERGE_PATIENCE
+
+
 def _merge_by_person(f):
     if f.project.remote:
-        return f"Ticket {f.id} ({f.tier}) is ready: a person reviews and merges its pull request."
+        return f"Ticket {f.id} ({f.tier}) is ready: a person reviews and merges {_pr(f)}."
     return (f"Ticket {f.id} ({f.tier}) is ready to merge. A person reviews branch {f.t.name} and approves the merge:"
             f" rail accept {f.id}. The engine then merges it.")
 
@@ -123,8 +146,12 @@ ROWS = [
     ("DROPPED",            "none",  "rest",        lambda f: f.state == "dropped",
      lambda f: f"Ticket {f.id} was dropped."),
     ("TICKET_LINT",        "agent", "agent_task",  lambda f: f.state == "new" and f.lint_errors,
-     lambda f: f"Ticket {f.id} fails ticket lint: {'; '.join(f.lint_errors)}. Fix {ticket_path(f.id)} on branch"
-               f" {f.t.name} and commit it there."),
+     lambda f: f"Ticket {f.id} isn't complete: {'; '.join(f.lint_errors)}. Read it ({ticket_path(f.id)} on branch"
+               f" {f.t.name}), write the whole ticket to a file with its Done Contract, tier and scope_paths, and run:"
+               f" rail amend {f.id} --file FILE"),
+    ("GO",                 "agent", "script",      lambda f: "rail:go" in f.labels and f.state not in ("merged", "dropped")
+                                                   and not (f.state == "new" and f.lint_errors),
+     lambda f: f"rail next --ticket {f.id}"),
     ("ACCEPT_AUTO",        "agent", "script",      lambda f: f.state == "new" and f.auto,
      lambda f: f"rail next --ticket {f.id}"),
     ("APPROVE_CONTRACT",   "human", "human_wait",  lambda f: f.state == "new",
@@ -151,12 +178,24 @@ ROWS = [
     ("FINDING_UPHELD",     "human", "human_wait",  lambda f: f.ledger.disputed_again(),
      lambda f: f"The refuter upheld {_join(f.ledger.disputed_again())} on ticket {f.id}, and the agent still disputes it."
                f" A person decides: rail answer {f.id} F1 declined \"why\" --owner, or rail accept {f.id} \"how to fix it\"."),
+    ("HOLD",               "human", "human_wait",  lambda f: "rail:needs-you" in f.labels
+                                                   and not (f.state == "merge-ready" and not f.auto),
+     lambda f: f"A person holds ticket {f.id} with the label rail:needs-you on {_pr(f)}. They continue it with the"
+               f" label rail:go, or: rail accept {f.id} \"note\""),
     ("CONSULT",            "agent", "script",      lambda f: f.state in OPEN and f.consult_due,
      lambda f: f"rail next --ticket {f.id}"),
     ("SETUP_FAILED",       "agent", "agent_task",  lambda f: f.state == "implementing" and f.setup_failed,
      _setup_failed),
     ("VERIFY_ASSUMPTIONS", "agent", "agent_task",  lambda f: f.state == "implementing" and f.open_assumptions,
      _assumptions),
+    ("RED_BASE",           "none",  "rest",        lambda f: f.state == "implementing" and f.red_base and f.last_fail
+                                                   and f.last_fail.get("step") == "verify" and not f.dirty,
+     lambda f: f"verify fails on the base branch too, so ticket {f.id} waits: a fix ticket for the base comes first."),
+    ("CONFLICT",           "agent", "agent_task",  lambda f: f.state == "implementing" and f.conflict and not f.dirty,
+     lambda f: f"{_pr(f)} conflicts with the base branch. Run: rail advance {f.id}. It rebases; when the rebase stops,"
+               f" resolve the conflict in {f.cwd} and run it again."),
+    ("RED_CHECK",          "agent", "agent_task",  lambda f: f.state == "implementing" and f.ci == "red" and not f.dirty,
+     _red_check),
     ("STEP_FAILED",        "agent", "agent_task",  lambda f: f.state == "implementing" and f.last_fail and not f.dirty,
      _step_failed),
     ("IMPLEMENT",          "agent", "agent_task",  lambda f: f.state == "implementing",
@@ -165,9 +204,21 @@ ROWS = [
      _answer),
     ("REVIEW",             "agent", "script",      lambda f: f.state == "reviewing",
      lambda f: f"rail advance {f.id}"),
-    ("CI_UNAVAILABLE",     "none",  "rest",        lambda f: f.state == "in-ci",
-     lambda f: f"Ticket {f.id} shipped. CI and the merge go through the forge, which isn't built yet (Phase 5)."),
-    ("MERGE",              "agent", "script",      lambda f: f.state == "merge-ready" and (f.auto or f.merge_approved),
+    ("FORGE_UNAVAILABLE",  "none",  "rest",        lambda f: f.state == "in-ci" and not f.forge,
+     lambda f: f"Ticket {f.id} shipped. The forge can't be reached (no GitHub remote, offline, or gh not logged in),"
+               f" so CI and the merge wait; rail doctor says which."),
+    ("REBASE_BEHIND",      "agent", "script",      lambda f: f.state == "in-ci" and f.behind,
+     lambda f: f"rail next --ticket {f.id}"),
+    ("CI_WAIT",            "none",  "rest",        lambda f: f.state == "in-ci",
+     lambda f: f"Ticket {f.id} shipped; CI runs on {_pr(f)}." if f.pushed else
+               f"Ticket {f.id} shipped; its branch isn't pushed to {_pr(f)} yet: run rail advance {f.id}."),
+    ("MERGE_FAILED",       "human", "human_wait",  lambda f: f.state == "merge-ready" and _merge_stale(f),
+     lambda f: f"The merge of {_pr(f)} was requested and hasn't landed. A person looks at the pull request, then"
+               f" continues: rail accept {f.id}"),
+    ("MERGE_REQUESTED",    "none",  "rest",        lambda f: f.state == "merge-ready" and _merge_requested(f),
+     lambda f: f"The merge of {_pr(f)} is requested; rail next sees it on the base branch once GitHub lands it."),
+    ("MERGE",              "agent", "script",      lambda f: f.state == "merge-ready" and (f.auto or f.merge_approved)
+                                                   and not (f.project.remote and not f.auto),
      lambda f: f"rail advance {f.id}"),
     ("MERGE_BY_PERSON",    "human", "human_wait",  lambda f: f.state == "merge-ready",
      _merge_by_person),
