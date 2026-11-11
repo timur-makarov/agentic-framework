@@ -96,6 +96,17 @@ class Ship(RailTest):
         self.assertEqual(p.git("log", "-1", "--format=%s", "1-fix-add").strip(), "1: ship failed")
         self.assertIn("api/handlers.py", p.git("status", "--porcelain", cwd=p.worktree("1")))
 
+    def test_non_ascii_paths_are_in_scope(self):
+        p = self.fixture(files={"café/menu.md": "# Menu\n",
+                                "ARCHITECTURE.md": ARCHITECTURE + "| menu | café/** | the menu |\n"})
+        p.add(ticket(scope=("src/**", "café/**")))
+        p.rail("next")
+        p.fix_calc("1")
+        p.write("café/menu.md", "# Menu\n\nCoffee.\n", base=p.worktree("1"))
+        shipped = p.rail("advance", "1")
+        self.assertEqual(shipped["state"], "merge-ready")
+        self.assertIn("café/**", p.rail("context", "1")["areas"][-1]["paths"])
+
     def test_open_assumed_row_is_verified_before_ship(self):
         p = self.fixture()
         p.add(ticket(body="\n## Assumptions\n- ASSUMED: nobody calls add with strings.\n"))

@@ -20,8 +20,10 @@ def git(args, cwd, check=True, input=None, env=None):
     full_env = dict(os.environ)
     full_env.update(_ENV)
     full_env.update(env or {})
+    # core.quotePath=false: git would print a non-ASCII path such as café/x as "caf\303\251/x".
     result = subprocess.run(
-        ["git", *args], cwd=cwd, input=input, capture_output=True, text=True, env=full_env,
+        ["git", "-c", "core.quotePath=false", *args], cwd=cwd, input=input, capture_output=True, text=True,
+        env=full_env,
     )
     if check and result.returncode != 0:
         raise GitError(args, result)
