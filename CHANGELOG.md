@@ -33,3 +33,5 @@ One line for each change, saying why.
 - Run every git command with core.quotePath=false, because git quotes non-ASCII paths and the engine then misread them in scope, floors, the size count and context.
 - Add rail docs: pages ship inside the engine, and the config and CLI reference pages are generated from the engine, so the docs a project reads match the engine it runs.
 - Add the docs pages for the loop, tickets and states, so an agent new to a project learns the railroad from rail docs.
+- Add the docs pages for review, the contract, retries and consult, so the answers an agent owes the rail are written where it looks.
+- Give a fresh retry budget when a person approves a ticket or an amend, as with any other continue, because plan section 10 says a person's act resets it.

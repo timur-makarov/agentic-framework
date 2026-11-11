@@ -85,8 +85,13 @@ class Facts:
         accepted_at = amended_at = shipped_at = continued_at = -1
         for i, e in enumerate(events):
             kind = e.get("event")
-            if kind == "continued":
-                attempts, consulted, since, continued_at = {}, set(), i, i
+            if kind == "continued" or (kind == "accepted" and e.get("by") == "person"):
+                # A person's act gives a fresh budget (plan, section 10), whether it continues a wait or approves.
+                attempts, consulted, since = {}, set(), i
+                if kind == "continued":
+                    continued_at = i
+                else:
+                    accepted_at = i
             elif kind == "step" and e.get("status") == "ran":
                 step = e.get("step")
                 if e.get("result") == "pass":

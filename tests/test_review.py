@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from railtest import CONFIG, RailTest, ticket  # noqa: E402
+from railtest import CONFIG, RailTest, ticket
 
 BLOCKING = {"severity": "blocking", "file": "src/calc.py", "line": 2, "claim": "add(-1, 1) returns the wrong sign.",
             "check": "a test of add with negative numbers"}
@@ -180,6 +180,21 @@ class Retry(RailTest):
         self.assertIn('A person said: "the check wants plain addition".', continued["action"]["brief"])
         p.fix_calc("1")
         self.assertEqual(p.rail("advance", "1")["state"], "merge-ready")
+
+    def test_approving_an_amend_gives_a_fresh_budget(self):
+        p = self.fixture(config=CONFIG.replace("[commands]", "[commands]").replace("timeout_secs = 60", "timeout_secs = 60")
+                         .replace("[consult]", "[retry]\nbudget = 1\n\n[consult]"))
+        p.add(ticket(tier="HIGH"))
+        p.rail("accept", "1")
+        p.rail("next")
+        p.rail("advance", "1", expect=3)  # the check fails: the budget of 1 is used, consult advises
+        p.rail("advance", "1", expect=3)  # the attempt after consult fails too
+        self.assertEqual(p.rail("next")["reason"]["code"], "WAITING_HUMAN")
+        path = os.path.join(p.worktree("1"), ".rail", "tickets", "1.md")
+        p.write(".rail/tickets/1.md", read(path).replace("== 5", "== 5 and calc.add(1, 1) == 2"), base=p.worktree("1"))
+        self.assertEqual(p.rail("amend", "1")["reason"]["code"], "APPROVE_AMEND")
+        approved = p.rail("accept", "1")
+        self.assertNotEqual(approved["owner"], "human", approved["reason"]["code"] + " " + approved["action"]["brief"][:300])
 
     def test_consult_on_request(self):
         p = self.fixture()

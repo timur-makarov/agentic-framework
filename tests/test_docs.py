@@ -51,3 +51,15 @@ class Loop(RailTest):
         states = p.rail("docs", "states")["text"]
         for state in ("new", "accepted", "implementing", "reviewing", "in-ci", "merge-ready", "merged", "dropped"):
             self.assertIn(f"| `{state}` |", states)
+
+
+class Review(RailTest):
+    def test_the_review_contract_and_retry_pages_cover_the_answers_an_agent_gives(self):
+        p = self.fixture()
+        review = p.rail("docs", "review")["text"]
+        for text in ("rail answer NN F1 fixed", "declined", "parked", "refuter", "--owner", "security seat"):
+            self.assertIn(text, review)
+        self.assertIn("rail amend NN", p.rail("docs", "contract")["text"])
+        retries = p.rail("docs", "retries")["text"]
+        for text in ("[retry] budget", "rail consult NN", "rail accept NN", "NN-advice.md"):
+            self.assertIn(text, retries)
