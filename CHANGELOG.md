@@ -23,3 +23,4 @@ One line for each change, saying why.
 - Add retry budgets and the consult pack: at the budget a different model advises once, then a person takes over; rail accept continues any wait with a note for the agent's next brief.
 - Add structure rules on added lines and files (with the default rule), size caps that raise the tier, and the migration brief, so a bad shape or an oversized change is caught at ship and in CI.
 - Make rail ci check the frozen contract and a complete review for the patch, and add a stand-in reviewer to the tests so the suite never calls a model.
+- Add the guard hook's deny rules for force pushes, pushes to the base branch, --no-verify and merges outside the engine, because these depend on a flag or refspec that permission rules can't match.
