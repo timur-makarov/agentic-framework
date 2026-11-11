@@ -4,14 +4,16 @@ Guards prevent mistakes; they are not a boundary. Permission rules in .claude/se
 can express, and this hook covers the rest.
 """
 
+import os
+import re
 import shlex
 
 WRAPPERS = {"sudo", "env", "command", "exec", "time", "nohup", "nice"}
 SEPARATORS = {";", "&&", "||", "|", "&", "|&"}
 
 
-def commands(line):
-    """The simple commands in a command line, as word lists: split on ;, &&, ||, | and newlines outside quotes."""
+def pipelines(line):
+    """Each line's pipelines, as lists of simple commands (word lists). ;, &&, || and & end a pipeline; | joins one."""
     found = []
     for part in line.splitlines():
         lexer = shlex.shlex(part, posix=True, punctuation_chars=True)
@@ -20,23 +22,33 @@ def commands(line):
             tokens = list(lexer)
         except ValueError:  # an unclosed quote: judge the words we have
             tokens = part.split()
-        words = []
+        pipeline, words = [], []
         for token in tokens:
-            if token in SEPARATORS:
-                if words:
-                    found.append(words)
+            if token in ("|", "|&"):
+                pipeline.append(_unwrap(words))
                 words = []
+            elif token in SEPARATORS:
+                pipeline.append(_unwrap(words))
+                found.append(pipeline)
+                pipeline, words = [], []
             elif not set(token) <= set("()"):
                 words.append(token)
-        if words:
-            found.append(words)
-    return [_unwrap(words) for words in found]
+        pipeline.append(_unwrap(words))
+        found.append(pipeline)
+    return [[words for words in pipeline if words] for pipeline in found]
+
+
+def commands(line):
+    """The simple commands in a command line, as word lists."""
+    return [words for pipeline in pipelines(line) for words in pipeline]
 
 
 def _unwrap(words):
-    """Drop `sudo`, `env`, VAR=value and the like, so `sudo git push -f` is still a push."""
+    """Drop `sudo -E`, `env`, VAR=value and the like, so `sudo git push -f` is still a push."""
     while words and (words[0] in WRAPPERS or ("=" in words[0] and not words[0].startswith("-"))):
         words = words[1:]
+        while words and words[0].startswith("-"):  # the wrapper's own options, such as sudo -E
+            words = words[1:]
     return words
 
 
@@ -101,11 +113,100 @@ def _push(args, base, branch):
     return None
 
 
+INTERPRETERS = {"sh", "bash", "zsh", "dash", "ksh", "fish", "python", "python3", "perl", "ruby", "node"}
+# sh -c "$(curl ...)" and bash <(curl ...): a shell, at the start of a command, running a download.
+SUBSTITUTED = re.compile(r"(?:^|[;&|]\s*)(?:sudo\s+(?:-\S+\s+)*)?(?:sh|bash|zsh|dash|ksh)\b[^;&|\n]*"
+                         r"(?:\$\(|`|<\()\s*(?:curl|wget)\b")
+# The flags that make an interpreter run a program from its arguments instead of stdin.
+PROGRAM_FLAGS = {"sh": "c", "bash": "c", "zsh": "c", "dash": "c", "ksh": "c", "fish": "c",
+                 "python": "cm", "python3": "cm", "perl": "eE", "ruby": "e", "node": "ep"}
+SAFE_ENV = {".env.example", ".env.sample", ".env.template", ".env.dist"}
+WRITE_REDIRECTS = {">", ">>", ">|", "&>", "&>>"}
+
+
+def _reads_program_from_stdin(words):
+    """An interpreter that runs what comes in on stdin: no script and no -c, -e or -m, or an explicit - or -s."""
+    name = os.path.basename(words[0])
+    if name not in INTERPRETERS:
+        return False
+    args = words[1:]
+    if "-" in args or "-s" in args:
+        return True
+    for a in args:
+        if a.startswith("--"):
+            continue
+        if a.startswith("-"):
+            if set(a[1:]) & set(PROGRAM_FLAGS[name]):
+                return False
+            continue
+        return False  # a script file
+    return True
+
+
+def _downloads_into_interpreter(line):
+    for pipeline in pipelines(line):
+        for i, words in enumerate(pipeline):
+            if os.path.basename(words[0]) in ("curl", "wget") and any(
+                    _reads_program_from_stdin(later) for later in pipeline[i + 1:]):
+                return True
+    return any(SUBSTITUTED.search(part) for part in line.splitlines())
+
+
+def _secret(word):
+    name = os.path.basename(word.rstrip("/"))
+    return bool(re.fullmatch(r"\.env(\..+)?", name)) and name not in SAFE_ENV
+
+
+def _wipes_disk(words):
+    if words[0].startswith("mkfs") or words[0] in ("wipefs", "fdisk", "sfdisk"):
+        return True
+    harmless = {"/dev/null", "/dev/zero", "/dev/stdout", "/dev/stderr"}
+    if words[0] == "dd" and any(w.startswith("of=/dev/") and w[3:] not in harmless for w in words[1:]):
+        return True
+    if words[0] == "shred" and any(w.startswith("/dev/") and w not in harmless for w in words[1:]):
+        return True
+    if words[0] == "rm":
+        recursive = any(w in ("-r", "-R", "--recursive") or (w.startswith("-") and not w.startswith("--")
+                                                            and set("rR") & set(w)) for w in words[1:])
+        roots = {"/", "/*", "~", "~/", "~/*", "$HOME", "${HOME}", "$HOME/", "$HOME/*"}
+        return recursive and ("--no-preserve-root" in words or any(w in roots for w in words[1:]))
+    return False
+
+
+def _journal_writes(words):
+    """The .rail/journal paths a command writes: redirect targets, and the files rm, mv, cp, tee, truncate,
+    sed -i and dd of= change."""
+    targets = [words[i + 1] for i, w in enumerate(words[:-1]) if w in WRITE_REDIRECTS]
+    redirected = {i + 1 for i, w in enumerate(words[:-1]) if w in WRITE_REDIRECTS or w in ("<", "<<", "<<<")}
+    cmd = words[0]
+    args = [w for i, w in enumerate(words[1:], 1) if not w.startswith("-") and i not in redirected
+            and w not in WRITE_REDIRECTS and w not in ("<", "<<", "<<<")]
+    in_place = any(w.startswith("--in-place") or (w.startswith("-") and not w.startswith("--") and "i" in w[1:])
+                   for w in words[1:])
+    if cmd in ("rm", "mv", "tee", "truncate", "touch") or (cmd in ("sed", "perl") and in_place):
+        targets += args
+    elif cmd == "cp" and args:
+        targets.append(args[-1])
+    elif cmd == "dd":
+        targets += [w[3:] for w in words[1:] if w.startswith("of=")]
+    return [t for t in targets if ".rail/journal" in t]
+
+
 def deny(line, base, branch):
     """Why a command line is denied, or None (plan, section 15)."""
+    if _downloads_into_interpreter(line):
+        return "piping a download into a shell runs code nobody has read"
     for words in commands(line):
         if not words:
             continue
+        if _wipes_disk(words):
+            return "this command can wipe a disk or a home folder"
+        secret = next((w for w in words if _secret(w)), None)
+        if secret:
+            return (f"{secret} holds secrets; read and write it yourself, outside the agent"
+                    f" ({', '.join(sorted(SAFE_ENV))} are fine)")
+        if _journal_writes(words):
+            return "only the engine writes .rail/journal/; record a finding's answer with rail answer"
         if words[0] == "git":
             sub, args = _git(words)
             if sub == "push":
