@@ -8,3 +8,4 @@ One line for each change, saying why.
 - Record Phase 0 check 2: the async merge endpoint merged the results PR from the cloud session.
 - Add the Phase 1 engine in Python 3.11 with the standard library only: the first-match table, the verbs add, accept, next, advance, status, context and drop, state derived from git and the journal, claims with their own worktrees, and the local squash merge, so a ticket can run from add to merge on the new core.
 - Add bin/rail, the launcher that runs the engine next to it and stops with one line on Python older than 3.11.
+- Add the end-to-end railroad tests on fixture projects (tests/), so every Phase 1 rule is checked through the real launcher: run with python3 -m unittest discover -s tests.

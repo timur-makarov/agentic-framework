@@ -155,7 +155,11 @@ def cleanup(project, tickets, facts):
 
 
 def cmd_add(project, args):
-    text = sys.stdin.read() if args.file == "-" else open(args.file).read()
+    if args.file == "-":
+        text = sys.stdin.read()
+    else:
+        with open(args.file) as f:
+            text = f.read()
     draft = Ticket(text)
     errors = lint(draft)
     if errors:
