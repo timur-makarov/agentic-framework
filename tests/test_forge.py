@@ -171,3 +171,20 @@ class Resume(RailTest):
         self.assertIn("a * b", open(os.path.join(b.worktree("1"), "src", "calc.py")).read())
         b.fix_calc("1")
         self.assertEqual(b.rail("advance", "1", session="run-2")["state"], "in-ci")
+
+
+class Doctor(RailTest):
+    def test_doctor_checks_the_one_time_github_settings(self):
+        a, b, github = self.github_pair()
+        found = {s["step"]: s for s in a.rail("doctor", expect=3)["steps"]}
+        self.assertEqual(found["gh"]["result"], "pass")
+        self.assertEqual(found["squash merging"]["result"], "fail")
+        self.assertEqual(found["required check"]["result"], "pass")
+        self.assertEqual(found["labels"]["result"], "fail")
+        github.update(lambda s: s.update(settings={"allow_squash_merge": True, "allow_merge_commit": False,
+                                                   "allow_rebase_merge": False, "squash_merge_commit_title": "PR_TITLE",
+                                                   "squash_merge_commit_message": "PR_BODY"},
+                                         labels=["rail", "rail:go", "rail:needs-you"]))
+        found = {s["step"]: s for s in a.rail("doctor", expect=None)["steps"]}
+        for name in ("squash merging", "required check", "labels"):
+            self.assertEqual(found[name]["result"], "pass", found[name])

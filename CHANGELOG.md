@@ -42,3 +42,8 @@ One line for each change, saying why.
 - Make labels the person's controls: rail:needs-you marks every wait (one saved search is the inbox) and holds a ticket when a person adds it, and rail:go approves a contract or continues any wait, with the PR's comments in the agent's next brief.
 - When only CI waits remain, next returns gh run watch for the PR's run, then rail next, so nothing polls.
 - Add a fake GitHub to the tests (tests/fake_gh.py), so the pull-request lifecycle is tested end to end without a network.
+- Add rail intake: GitHub issues labelled rail, or any tracker with --external-id, become ticket stubs once each; the agent writes the contract and saves it with rail amend --file, and a deploy issue that starts with Commit: names the ticket that caused it.
+- Add the red-base check: when verify fails at ship and on the base branch too, the attempt doesn't count, next opens one fix ticket for the base, and other ships wait for it.
+- Add the notify hook (Notification, idle_prompt), which announces each new wait for a person once as a desktop notification, so an unattended desk still hears about waits.
+- Add the sweep: after [sweep] after unreviewed LOW tickets and ticketless commits, next offers rail sweep, which runs the free part and one review pass over them and writes a summary the agent turns into tickets, including "make it a check" tickets; its merge carries the Sweep: trailer.
+- Document GitHub setup, running from GitHub events, and the sweep, and make the loop, states, away and environments pages describe the forge.

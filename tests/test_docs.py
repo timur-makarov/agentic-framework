@@ -75,3 +75,7 @@ class Operations(RailTest):
         self.assertIn("## Decision", p.rail("docs", "adr")["text"])
         self.assertIn("People keep four acts", p.rail("docs", "environments")["text"])
         self.assertIn("/loop", p.rail("docs", "away")["text"])
+        self.assertIn("rail intake github", p.rail("docs", "away")["text"])
+        self.assertIn("required check", p.rail("docs", "github")["text"])
+        self.assertIn("GITHUB_TOKEN", p.rail("docs", "github-runner")["text"])
+        self.assertIn("Sweep:", p.rail("docs", "sweep")["text"])

@@ -184,6 +184,13 @@ ROWS = [
                f" label rail:go, or: rail accept {f.id} \"note\""),
     ("CONSULT",            "agent", "script",      lambda f: f.state in OPEN and f.consult_due,
      lambda f: f"rail next --ticket {f.id}"),
+    ("SWEEP_RUN",          "agent", "script",      lambda f: f.state == "implementing" and f.sweep and not f.sweep_done,
+     lambda f: "rail sweep"),
+    ("SWEEP_TICKETS",      "agent", "agent_task",  lambda f: f.state == "implementing" and f.sweep and not f.dirty
+                                                   and not f.last_fail,
+     lambda f: f"The sweep ran: read .rail/journal/{f.id}-summary.md in {f.cwd}. Open a ticket with rail add for each"
+               f" finding worth one (set caused_by when a ticket caused it), and one ticket \"make it a check: ...\" for"
+               f" each kind of proposed check. Drop duplicates. Change no code here. Then run: rail advance {f.id}"),
     ("SETUP_FAILED",       "agent", "agent_task",  lambda f: f.state == "implementing" and f.setup_failed,
      _setup_failed),
     ("VERIFY_ASSUMPTIONS", "agent", "agent_task",  lambda f: f.state == "implementing" and f.open_assumptions,

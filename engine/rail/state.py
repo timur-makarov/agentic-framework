@@ -74,6 +74,8 @@ class Facts:
         self.ci, self.ci_failing, self.conflict, self.behind, self.pushed = None, [], False, False, None
         self.merge_note = project.cache_read("merge", t.id)
         self.red_base = None
+        self.sweep = bool(self.ticket) and (self.ticket.get("external_id") or "").startswith("sweep#")
+        self.sweep_done = any(r.get("role") == "sweep" for r in self.ledger.doc["runs"])
 
         author = self.ticket.tier if self.ticket and self.ticket.tier in TIERS else "LOW"
         if self.accepted:
@@ -184,11 +186,12 @@ class Facts:
             self.shipped = verdicts[-1]
         elif verdicts:
             self.last_fail = verdicts[-1]
+        red = project.cache_read("red-base", "base")
+        fixing = (self.ticket.get("external_id") or "").startswith("red-base#")
+        if red and not fixing and red == gitx.rev(project.base_ref, project.root):
+            self.red_base = red
         if self.dirty or not self.shipped:
             return "implementing"
-        red = project.cache_read("red-base", "base")
-        if red and red == gitx.rev(project.base_ref, project.root):
-            self.red_base = red
         if self.pr_open:
             # The engine reads CI only once the ticket has shipped this patch, and only on the head it pushed.
             tip = gitx.rev(t.ref, project.root)

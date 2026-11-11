@@ -130,6 +130,11 @@ def handle(state, method, path, body):
             comments.append({"body": body["body"], "user": {"login": "rail"}, "created_at": "2026-11-11T12:00:00Z"})
             return respond(201, comments[-1])
         return respond(200, comments)
+    if len(rest) == 2 and rest[0] == "issues" and method == "GET":
+        issue = next((i for i in issues if i["number"] == int(rest[1])), None)
+        if not issue:
+            return respond(404, {"message": "Not Found"})
+        return respond(200, dict(issue, labels=[{"name": n} for n in issue["labels"]]))
     if rest == ["issues"] and method == "GET":
         found = [i for i in issues if i["state"] == query.get("state", "open")
                  and (not query.get("labels") or query["labels"] in i["labels"])]

@@ -255,14 +255,15 @@ def validate(project, head, nn, data, ledger, role, disputed):
     return errors
 
 
-def run(project, f, role, receipt, disputed=None):
-    """One run of review.command. Adds its step and finding events to `receipt`, and returns the stored run entry."""
+def run(project, f, role, receipt, disputed=None, prompt=None):
+    """One run of review.command. Adds its step and finding events to `receipt`, and returns the stored run entry.
+    A sweep run brings its own brief, writes no finding events, and never fails (SPEC, section 4)."""
     t, wt = f.t, f.t.worktree
     head = gitx.rev(t.ref, project.root)
     text = gitx.read_blobs([f"{t.ref}:{review_path(t.id)}"], project.root)[f"{t.ref}:{review_path(t.id)}"]
     doc = load_doc(text, t.id)
     ledger = Ledger(t.events, doc)
-    prompt = brief(project, f, role, ledger, disputed)
+    prompt = prompt or brief(project, f, role, ledger, disputed)
     timeout = project.config["commands"]["timeout_secs"]
     code, output, ms = run_shell(project.config["review"]["command"], wt, {"RAIL_TICKET": t.id}, timeout, stdin=prompt)
     gitx.git(["reset", "--quiet", "--hard", head], wt)
@@ -309,6 +310,8 @@ def run(project, f, role, receipt, disputed=None):
                                 by="reviewer", **first))
         finding["id"] = fid
         entry["findings"].append(finding)
+    if role == "sweep":
+        events = []  # the sweep's findings become tickets, not ledger entries
     if role == "refuter" and not data["findings"]:
         events.append(event(t.id, "finding", id=disputed, outcome="declined", by="refuter", reason=data["summary"]))
     blocking = [x for x in entry["findings"] if (ledger.findings.get(x.get("repeats"), x).get("severity") == "blocking")]
@@ -316,6 +319,8 @@ def run(project, f, role, receipt, disputed=None):
         # The seat's new blocking findings each go to a refuter at once (plan, section 8, item 7); the refuter's
         # verdict is what fails. A repeat of one the refuter already upheld stays open.
         blocking = [x for x in blocking if x.get("repeats")]
+    if role == "sweep":
+        blocking = []  # a sweep never blocks a merge
     passed = not blocking
     detail = (f"run {entry['run']}: dismissed {disputed}" if role == "refuter" and passed else
               f"run {entry['run']}: upheld {disputed}" if role == "refuter" else

@@ -28,7 +28,9 @@ In the ticket's worktree, `advance` commits your in-scope changes and ships: it 
 then runs ticket lint, the ASSUMED rows, scope, structure rules, the migration fields, size, doc-lint,
 `verify` and each `Check:` line. On MEDIUM and HIGH it then runs the review. With no remote, a ready
 ticket in `auto_tiers` is merged by the next `advance`, as a squash commit on the base branch; other tiers
-wait for `rail accept NN` first. With a remote, the merge goes through the pull request.
+wait for `rail accept NN` first. With a remote, every ticket has a pull request; once its required checks
+are green, `advance` merges an `auto_tiers` ticket through GitHub's async merge, and a person merges the
+rest. When only CI waits remain, `next` returns `gh run watch` for the run, then `rail next`.
 
 ## Other verbs
 

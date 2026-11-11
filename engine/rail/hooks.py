@@ -74,7 +74,55 @@ def guard():
     return 0
 
 
-HOOKS = {"session-start": session_start, "guard": guard}
+NEEDS = {
+    "APPROVE_CONTRACT": "approve the contract", "APPROVE_AMEND": "approve the amended contract",
+    "MERGE_BY_PERSON": "merge", "RETRY_CAP": "stuck at the retry budget", "STUCK_REVIEW": "the review timed out",
+    "FINDING_UPHELD": "decide a finding", "HOLD": "held", "MERGE_FAILED": "the merge failed",
+}
+
+
+def terminal_sequence(message, term_program=None, term=None):
+    """A desktop notification for the terminal in use (plan, section 15), or a bell."""
+    term_program = term_program if term_program is not None else os.environ.get("TERM_PROGRAM", "")
+    term = term if term is not None else os.environ.get("TERM", "")
+    message = message.replace("\x07", "").replace("\x1b", "")
+    if term_program in ("iTerm.app", "WezTerm"):
+        return f"\x1b]9;{message}\x07"
+    if term_program in ("ghostty", "WarpTerminal"):
+        return f"\x1b]777;notify;Rail;{message}\x07"
+    if "kitty" in term:
+        return f"\x1b]99;;{message}\x1b\\"
+    return "\x07"
+
+
+def notify():
+    """Notification (idle_prompt): announce each new wait for a person once, and stay silent otherwise."""
+    from .cli import load
+    from .table import first_match
+
+    data = _input()
+    try:
+        project = Project(data.get("cwd") or os.getcwd())
+    except RailError:
+        return 0
+    tickets, facts = load(project)
+    waits = {}
+    for f in facts.values():
+        code, owner, _ = first_match(f)
+        if owner == "human":
+            waits[f.id] = (code, f.pr["html_url"] if f.pr else None)
+    announced = json.loads(project.cache_read("notify", "announced") or "{}")
+    new = [(nn, code, url) for nn, (code, url) in waits.items() if announced.get(nn) != code]
+    project.cache_write("notify", "announced", json.dumps({nn: code for nn, (code, _) in waits.items()}))
+    if not new:
+        return 0
+    message = " · ".join(f"{nn}: {NEEDS.get(code, code.lower().replace('_', ' '))}" for nn, code, _ in new)
+    link = next((url for _, _, url in new if url), None)
+    print(json.dumps({"terminalSequence": terminal_sequence(f"Rail: {message}" + (f" {link}" if link else ""))}))
+    return 0
+
+
+HOOKS = {"session-start": session_start, "guard": guard, "notify": notify}
 
 
 def run(name):

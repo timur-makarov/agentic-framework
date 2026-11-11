@@ -34,9 +34,10 @@ def checks(project):
     except (OSError, ValueError):
         settings = {}
     hooks = settings.get("hooks", {})
-    missing = [name for event, name in (("SessionStart", "session-start"), ("PreToolUse", "guard"))
+    missing = [name for event, name in (("SessionStart", "session-start"), ("PreToolUse", "guard"),
+                                        ("Notification", "notify"))
                if f"rail hook {name}" not in json.dumps(hooks.get(event, []))]
-    found.append(("hooks", not missing, "the session-start and guard hooks are wired" if not missing
+    found.append(("hooks", not missing, "the session-start, guard and notify hooks are wired" if not missing
                   else f"not wired in .claude/settings.json: {', '.join(missing)}; run rail init"))
     permissions = settings.get("permissions", {})
     expected = [("deny", "Edit(./.rail/journal/**)"), ("deny", "Read(./**/.env)"), ("ask", "Bash(sudo *)")]

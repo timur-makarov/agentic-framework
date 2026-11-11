@@ -72,6 +72,11 @@ def make_worktree(project, t):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     gitx.git(["worktree", "add", "--quiet", path, t.branch], project.root)
     t.worktree = path
+    copy_includes(project, path)
+
+
+def copy_includes(project, path):
+    """Copy the local files .worktreeinclude lists (such as .env) into a worktree."""
     include = os.path.join(project.root, ".worktreeinclude")
     if os.path.exists(include):
         with open(include) as f:
@@ -185,6 +190,24 @@ def check(project, nn, ticket, ref, cwd, tier, run, patch_id, accepted=None):
     return tier
 
 
+def base_fails_verify(project):
+    """Run verify once more on the base branch, in a scratch worktree. Returns its output when it fails there too."""
+    import tempfile
+
+    tip = gitx.rev(project.base_ref, project.root)
+    path = tempfile.mkdtemp(prefix="rail-base-")
+    gitx.git(["worktree", "add", "--quiet", "--detach", path, tip], project.root)
+    try:
+        copy_includes(project, path)
+        timeout = project.config["commands"]["timeout_secs"]
+        if project.config["commands"]["setup"]:
+            run_shell(project.config["commands"]["setup"], path, {"RAIL_TICKET": ""}, timeout)
+        code, output, _ = run_shell(project.config["commands"]["verify"], path, {"RAIL_TICKET": ""}, timeout)
+        return None if code == 0 else tail(output)
+    finally:
+        gitx.git(["worktree", "remove", "--force", path], project.root, check=False)
+
+
 def ship(project, f, run):
     """Rebase onto a moved base, run the checks, and add a shipped event when all pass."""
     t, ref = f.t, f.t.ref
@@ -209,6 +232,17 @@ def ship(project, f, run):
     patch_id = project.patch_id(ref)
     text = gitx.read_blobs([f"{ref}:{ticket_path(t.id)}"], project.root)[f"{ref}:{ticket_path(t.id)}"]
     tier = check(project, t.id, Ticket(text or ""), ref, wt, f.tier, run, patch_id, accepted=f.accepted)
+    if tier is None and run.failure[0] == "verify":
+        # A red base spends no budget (plan, section 7): two tickets that each pass can break main together.
+        red = base_fails_verify(project)
+        if red:
+            run.events[-1]["counted"] = False
+            run.events[-1]["detail"] = "red base"
+            run.steps[-1 if run.steps[-1]["step"] == "verify" else -2]["detail"] = "red base"
+            project.cache_write("red-base", "base", gitx.rev(project.base_ref, project.root))
+            project.cache_write("red-base", "output", red)
+            run.failure = ("verify", "verify fails on the base branch too, so this attempt doesn't count. rail next"
+                                     " opens one ticket that fixes the base; this ticket's ship waits until it merges.")
     if tier is None:
         return run
     head = gitx.rev(ref, project.root)
@@ -256,6 +290,7 @@ def describe(project, t, ticket, tier):
         f"Migrations: {ticket.get('reversibility')}; rollback: {ticket.get('rollback')}.")
     risk = (f"{tier}. Touches {', '.join(ticket.scope)}. {migrations} "
             f"Changed lockfiles: {', '.join(lockfiles) or 'none'}.")
+    external = ticket.get("external_id", "") or ""
     body = [
         "## Why", f"{ticket.sections.get('Why', '')} (ticket {t.id})", "",
         "## Look at", ticket.sections.get("Look at") or "(not written)", "",
@@ -263,9 +298,10 @@ def describe(project, t, ticket, tier):
         "## Risk", risk, "",
         f"Ticket: {t.id}", f"Tier: {tier}",
     ]
-    external = ticket.get("external_id", "")
     if external.startswith("github#"):
         body.append(f"Closes #{external.split('#', 1)[1]}")
+    if external.startswith("sweep#"):
+        body.append(f"Sweep: since {external.split('#', 1)[1]}")  # where the next sweep starts
     return subject, "\n".join(body)
 
 
