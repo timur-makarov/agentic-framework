@@ -38,6 +38,8 @@ if isinstance(response, dict) and "touch" in response:
         f.write("scratch\n")
     with open("src/calc.py", "a") as f:
         f.write("# the reviewer was here\n")
+if isinstance(response, dict) and "sleep" in response:
+    time.sleep(response.pop("sleep"))  # a review that takes a while, after its scratch files are written
 print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": "", "total_cost_usd": 0.01,
                   "modelUsage": {"a-small-helper": {"costUSD": 0.001},
                                  os.environ.get("ANTHROPIC_MODEL") or "fake-model": {"costUSD": 0.009}},

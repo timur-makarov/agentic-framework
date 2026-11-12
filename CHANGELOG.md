@@ -78,3 +78,5 @@ One line for each change, saying why.
 - Write the sign of life before a review run reads the head it resets the worktree to; written after, it left the branch behind its own pushed commit, and no later push went through.
 - Mark a drop in the counter branch too, so it outlives the ticket's branch: a dropped ticket whose contract had reached the base branch looked approved again once its branch was deleted.
 - Read a command that follows a shell keyword as that command: then git push -f, { cd -; ... } and ! git push were missed, because the guard looked only at the first word.
+- Hold a ticket while an engine command works in its worktree, and make saves skip a held ticket: a save hook that fired while advance was inside a review pushed the reviewer's scratch files, and the reset after the review left the branch behind that push.
+- Stop rail next crashing when it runs with no session id in a clone where a Claude session has started: it read the session marker's folder as a file.

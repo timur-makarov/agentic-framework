@@ -225,6 +225,7 @@ def transition(project, f, code):
     """Make one of the moves the table leaves to `next`. False when another clone got there first."""
     t = f.t
     run = steps.Run(project, t)
+    project.busy(t.id, wait=True)  # no save while the engine moves the ticket's branch or worktree
     if code == "ACCEPT_AUTO":
         ensure_local(project, t)
         project.append_events(t, [accepted_event(t.id, f.ticket, f.tier, "engine", "lint")], "accept")
@@ -613,6 +614,7 @@ def cmd_sweep(project, args):
     f, receipts = settle(project, nn, explicit=True)
     if f is None or f.state != "implementing" or not f.worktree:
         return from_facts(f, receipts) if f else answer(nn, code="CLAIMED_ELSEWHERE")
+    project.busy(nn, wait=True)
     if not f.sweep_done:
         run = steps.Run(project, f.t)
         sweep.run(project, f, run)
@@ -885,6 +887,7 @@ def cmd_advance(project, args):
             raise RailError("which ticket? Run it in the ticket's worktree, or pass --ticket NN")
         key = mine[0].id
     nn = project.find(key, tickets).id
+    project.busy(nn, wait=True)  # held to the end of the command: no save while it ships and reviews
     receipts, first = [], True
     for _ in range(12):
         tickets, facts = load(project)
@@ -1115,7 +1118,15 @@ def save_all(project, via, only=None):
             if f.taken_from_me or only:
                 notes.append(first_match(f)[2]["brief"])
             continue
+        hold = project.busy(f.id)
+        if hold is None:
+            # Another rail command is at work in this ticket's worktree, such as advance inside a review: what is
+            # there now may be the reviewer's scratch files. That command pushes when it is done.
+            if only:
+                notes.append(f"Ticket {f.id}: another rail command is at work on it, so nothing was saved now.")
+            continue
         saved = save_work(project, f, via)
+        project.release(f.id)
         if saved is None:
             continue
         inside, outside, pushed = saved

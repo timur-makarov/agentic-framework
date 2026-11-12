@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -135,6 +136,35 @@ class Save(RailTest):
         a.rail("advance", "1")  # a second ship and review still push
         a.git("fetch", "--quiet")
         self.assertEqual(a.git("rev-parse", "1-fix-add"), a.git("rev-parse", "origin/1-fix-add"))
+
+    def test_a_save_stays_out_while_advance_is_inside_a_review(self):
+        # The reviewer writes scratch files into the worktree. A save hook that fired then would push them.
+        a, b = self.remote_pair()
+        a.add(ticket(tier="MEDIUM"))
+        a.rail("next")
+        a.fix_calc("1")
+        a.queue_reviews({"touch": "src/scratch.py", "sleep": 4, "summary": "Tried an idea.", "findings": []})
+        worker = threading.Thread(target=lambda: a.rail("advance", "1"))
+        worker.start()
+        time.sleep(2.5)  # the review is running, and its scratch file is in the worktree
+        self.assertTrue(os.path.exists(os.path.join(a.worktree("1"), "src", "scratch.py")))
+        self.assertIn("another rail command is at work", a.rail("save", "1")["action"]["brief"])
+        self.assertEqual(hook(a, "stop").returncode, 0)
+        worker.join()
+        a.git("fetch", "--quiet")
+        self.assertEqual(a.git("rev-parse", "1-fix-add"), a.git("rev-parse", "origin/1-fix-add"))
+        self.assertNotIn("scratch.py", a.git("ls-tree", "-r", "--name-only", "origin/1-fix-add"))
+
+    def test_next_works_from_a_plain_terminal_after_a_claude_session(self):
+        # No session id, and the folder the session-start hook made: next once tried to read that folder as a file.
+        p = self.fixture()
+        p.add(ticket())
+        hook(p, "session-start", command='"$CLAUDE_PROJECT_DIR"/.rail/bin/rail hook session-start')
+        env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_CODE_SESSION_ID", "RAIL_TICKET")}
+        result = subprocess.run([p.path(".rail", "bin", "rail"), "next", "--json"], capture_output=True, text=True,
+                                cwd=p.root, env=dict(env, RAIL_CLOUD="0"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["reason"]["code"], "IMPLEMENT")
 
     def test_the_brief_asks_for_saves_only_where_no_hook_makes_them(self):
         p = self.fixture()
