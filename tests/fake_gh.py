@@ -142,6 +142,10 @@ def handle(state, method, path, body):
     if len(rest) == 3 and rest[0] == "commits" and rest[2] == "check-runs":
         runs = state.setdefault("checks", {}).get(rest[1], [])
         return respond(200, {"total_count": len(runs), "check_runs": runs})
+    if len(rest) == 4 and rest[:2] == ["actions", "jobs"] and rest[3] == "logs":
+        log = state.get("logs", {}).get(rest[2])  # plain text, as GitHub sends a job's log
+        print(log if log is not None else json.dumps({"message": "Not Found"}))
+        return 0 if log is not None else 1
     if len(rest) == 3 and rest[0] == "rules" and rest[1] == "branches":
         required = [{"context": c} for c in state.get("required", [])]
         return respond(200, [{"type": "required_status_checks",

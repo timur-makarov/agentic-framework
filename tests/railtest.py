@@ -194,11 +194,20 @@ class GitHub:
         return subprocess.run(["git", "--git-dir", bare, "rev-parse", f"refs/heads/{branch}"], capture_output=True,
                               text=True).stdout.strip()
 
-    def ci(self, branch, conclusion="success", summary=""):
-        """GitHub's CI finishes on the branch's head: the `rail` check passes or fails."""
+    def ci(self, branch, conclusion="success", summary="", log=None):
+        """GitHub's CI finishes on the branch's head: the `rail` check passes or fails. With `log`, the check run
+        is shaped like one from GitHub Actions: no output of its own, and the job's log behind its id."""
         sha = self.head(branch)
         run = {"name": "rail", "status": "completed", "conclusion": conclusion, "output": {"summary": summary}}
-        self.update(lambda s: s["checks"].__setitem__(sha, [run]))
+        if log is not None:
+            run.update(id=7001, app={"slug": "github-actions"}, output={"title": None, "summary": "", "text": None})
+
+        def change(s):
+            s["checks"][sha] = [run]
+            if log is not None:
+                s.setdefault("logs", {})["7001"] = log
+
+        self.update(change)
 
     def label(self, number, name):
         self.update(lambda s: next(p for p in s["pulls"] if p["number"] == number)["labels"].append(name))

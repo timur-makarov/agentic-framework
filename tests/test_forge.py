@@ -54,6 +54,33 @@ class Lifecycle(RailTest):
         a.write("src/calc.py", "def add(a, b):\n    return b + a\n", base=a.worktree("1"))
         self.assertEqual(a.rail("advance", "1")["state"], "in-ci")
 
+    def test_a_red_check_from_github_actions_brings_the_failing_steps_log(self):
+        # A real check run from Actions has an empty output; what `rail ci` printed is in the job's log.
+        a, b, github = self.github_pair()
+        a.add(ticket())
+        a.rail("next")
+        a.fix_calc("1")
+        a.rail("advance", "1")
+        log = "\n".join([
+            "2026-11-12T10:13:42.7741036Z ##[group]Run .rail/bin/rail ci",
+            "2026-11-12T10:13:42.7741580Z \x1b[36;1m.rail/bin/rail ci\x1b[0m",
+            "2026-11-12T10:13:42.7791915Z ##[endgroup]",
+            "2026-11-12T10:13:42.9786130Z owner agent \u00b7 CI_FAILED",
+            "2026-11-12T10:13:42.9786790Z   verify: ran, fail (exit 1)",
+            "2026-11-12T10:13:42.9797790Z ",
+            "2026-11-12T10:13:42.9798224Z FAIL: test_negative (tests.test_calc.CalcTest)",
+            "2026-11-12T10:13:43.0000000Z ##[error]Process completed with exit code 1.",
+            "2026-11-12T10:13:43.0093031Z Post job cleanup.",
+        ])
+        github.ci("1-fix-add", "failure", log=log)
+        brief = a.rail("next")["action"]["brief"]
+        self.assertIn("FAIL: test_negative (tests.test_calc.CalcTest)", brief)
+        self.assertIn("verify: ran, fail (exit 1)", brief)
+        self.assertIn("Process completed with exit code 1.", brief)
+        self.assertNotIn("Post job cleanup", brief)
+        self.assertNotIn("2026-11-12T", brief)
+        self.assertNotIn("##[group]", brief)
+
 
 class Approvals(RailTest):
     def test_a_backlog_merges_low_and_medium_while_high_waits_on_its_pull_request(self):

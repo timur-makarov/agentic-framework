@@ -1083,3 +1083,28 @@ What it found, and what changed:
 - **`rail docs` didn't work before `rail init`.** It does now.
 - **Gaps in the docs and briefs:** the init task now says how to write `## Areas` and `.worktreeinclude`, and that `RAIL_BASE` names the range for a secret scan. The docs now say where a ticket draft goes, that the ticket file is outside `scope_paths`, and what `status` shows. Seed comments no longer point at this plan.
 - **A merge removed the worktree the shell stood in.** The merge's answer now says to run it from the project's root.
+
+### Phase 5: the live run on GitHub, first part
+
+Started on 2026-11-12 from a cloud session. The framework had moved to `timur-makarov/agentic-framework`, and `timur-makarov/throw-away-repo`, now public, became the test project: a tiny calculator, set up with `rail init`.
+
+What worked against real GitHub:
+
+- **A force push with a lease passes the cloud's proxy.** `git push --force-with-lease=refs/heads/main:<old>` replaced the framework repository's `main`. The earlier refusal came from the session's auto-mode permission check, not from the proxy. So the rebase of a pushed ticket branch (sections 7 and 10) works in the cloud when the engine makes the push.
+- **`rail init` created the three labels, and the setup pull request opened through `gh api`.** The push included `.github/workflows/rail.yml`, so the session's token may write workflow files.
+- **The `rail` check ran on GitHub Actions and passed** on the setup pull request, 20 seconds after the push: `CI_NO_TICKET`, verify passed, "its paths would make it HIGH".
+- **Reads of Actions runs, jobs and job logs work**, and so does `gh run watch`.
+- **The guard hook loads in a cloud session** as soon as `.claude/settings.json` is in the checkout, with two repositories attached. It refused the agent's own merge of the setup pull request through `gh api`.
+
+What the cloud refuses:
+
+- **Repository settings and rulesets can't be written:** `PATCH /repos/{owner}/{repo}` returns "Repository settings writes are not permitted through this proxy", and `POST /repos/{owner}/{repo}/rulesets` returns "Write access to this GitHub API path is not permitted through this proxy". So the one-time settings (the required `rail` check, squash only, deleting merged branches) stay a person's, made in GitHub's settings or from a local session.
+- **`GET /repos/{owner}/{repo}/actions/permissions` is refused** too. Nothing in the engine reads it.
+
+What it found, and what changed:
+
+- **`rail init` on a setup branch took that branch for the base.** A cloud clone has no `origin/HEAD`. Init now asks the remote for its default branch.
+- **The guard judged every command by the session's directory.** With the framework's repository attached to the same session, it refused `cd ../agentic-framework && git push origin main`. It now follows `cd` and `git -C`, leaves another repository alone, reads the branch of the worktree a command runs in, and leaves a `gh` merge alone when it names another repository.
+- **A check run from GitHub Actions has an empty output**, so a red check's brief would have said "no output". The engine now reads the failing step's output from the job's log.
+
+Where it stopped: **the setup pull request is the person's to merge** (section 14), and the guard holds the agent to that. The ticket lifecycle on GitHub (pull requests per ticket, CI, the engine's merge, parallel claims, resume, the rebase when behind) runs once the owner has merged it. "Behind" also needs the ruleset with up-to-date branches required, which only a person can make.

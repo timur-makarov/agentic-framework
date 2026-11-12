@@ -53,6 +53,37 @@ class Deny(RailTest):
                         "gh api repos/o/r/pulls/12", "gh pr view 12"):
             self.assertIsNone(decide(p, command), command)
 
+    def test_a_command_that_runs_in_another_repository_is_left_alone(self):
+        # A cloud session can hold several repositories: the guard protects this project's branches, not theirs.
+        p = self.fixture()
+        other = os.path.join(self.tmp, "other")
+        subprocess.run(["git", "init", "--quiet", "-b", "main", other], check=True)
+        for command in (f"cd {other} && git push origin main", f"git -C {other} push origin main",
+                        f"cd {other} && git push --force-with-lease origin main", f"cd {other}; git merge topic",
+                        f"cd {other} && gh pr merge 4 --squash"):
+            self.assertIsNone(decide(p, command), command)
+        # Back in the project, or somewhere the hook can't follow, the rules hold.
+        for command in (f"cd {other} && cd {p.root} && git push origin main", "cd $ELSEWHERE && git push origin main",
+                        "cd /no/such/dir; git push origin main", f"cd {other} && git -C {p.root} push origin main"):
+            self.assertEqual(decide(p, command), "deny", command)
+
+    def test_a_ticket_worktree_is_judged_by_its_own_branch(self):
+        p = self.fixture()
+        tree = os.path.join(self.tmp, "tree")
+        p.git("worktree", "add", "--quiet", "-b", "7-work", tree)
+        self.assertIsNone(decide(p, f"cd {tree} && git push"))
+        self.assertIsNone(decide(p, f"git -C {tree} merge main"))
+        self.assertEqual(decide(p, f"cd {tree} && git push origin main"), "deny")
+
+    def test_a_merge_of_another_repositorys_pull_request_is_left_alone(self):
+        a, b, github = self.github_pair()  # the project is acme/app on the fake GitHub
+        self.assertEqual(decide(a, "gh api -X PUT repos/acme/app/pulls/3/merge-async"), "deny")
+        self.assertEqual(decide(a, "gh api -X PUT repos/ACME/app/pulls/3/merge"), "deny")
+        self.assertEqual(decide(a, "gh pr merge 3"), "deny")
+        self.assertEqual(decide(a, "gh pr merge 3 -R acme/app"), "deny")
+        self.assertIsNone(decide(a, "gh api -X PUT repos/someone/else/pulls/3/merge-async"))
+        self.assertIsNone(decide(a, "gh pr merge 3 -R someone/else"))
+
     def test_outside_a_rail_project_the_guard_stays_out_of_the_way(self):
         p = self.fixture()
         plain = os.path.join(self.tmp, "plain")

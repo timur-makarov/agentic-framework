@@ -54,3 +54,6 @@ One line for each change, saying why.
 - Record the ready-to-use result in section 25 of the plan.
 - Point the install line at the framework's own repository, timur-makarov/agentic-framework.
 - Make rail init ask the remote for its default branch when the clone has no origin/HEAD (cloud clones have none), so init run on a setup branch no longer takes that branch for the base.
+- Make the guard leave another repository alone: it follows cd and git -C, judges a ticket worktree by its own branch, and lets a gh merge through when it names a different repository, so a session with several repositories can push to the others.
+- Bring the failing step's output into a red check's brief when the check run comes from GitHub Actions, whose check runs carry no output of their own: the engine reads the job's log.
+- Record the first part of the live Phase 5 run in section 25: what real GitHub and the cloud's proxy allowed and refused, and that the setup pull request waits for the owner.
