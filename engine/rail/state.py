@@ -156,8 +156,8 @@ class Facts:
 
     def _state(self):
         t, project = self.t, self.project
-        if t.merged or (self.pr and self.pr.get("merged")):
-            return "merged"
+        if t.merged or (self.pr and (self.pr.get("merged") or self.pr.get("merged_at"))):
+            return "merged"  # GitHub's list of pull requests carries merged_at, and no merged flag
         if self.dropped_event or not t.name:
             return "dropped"  # a dropped event, or the ID ref is all that is left (SPEC, section 4)
         if self.pr and self.pr.get("state") == "closed":

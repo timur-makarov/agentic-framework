@@ -13,14 +13,16 @@ LOCKFILES = {
 }
 
 
-def _diff_range(project, ref):
-    return [f"{project.base_ref}...{ref}"] if ref else [gitx.out(["merge-base", project.base_ref, "HEAD"], project.root)]
+def _diff_range(project, ref, cwd):
+    """With no ref: from the merge base of the checkout in `cwd`, which is a ticket's worktree, not the project's
+    root, whose own branch may be behind the base."""
+    return [f"{project.base_ref}...{ref}"] if ref else [gitx.out(["merge-base", project.base_ref, "HEAD"], cwd)]
 
 
 def added(project, ref, cwd=None):
     """{path: [added lines]} and the files the change adds. --no-color, so color.ui=always can't hide a line."""
     cwd = cwd or project.root
-    diff = gitx.out(["diff", "-U0", "--no-color", "--no-ext-diff", *_diff_range(project, ref), *PRODUCT_SPEC], cwd)
+    diff = gitx.out(["diff", "-U0", "--no-color", "--no-ext-diff", *_diff_range(project, ref, cwd), *PRODUCT_SPEC], cwd)
     lines, path = {}, None
     for line in diff.splitlines():
         if line.startswith("+++ "):
@@ -29,7 +31,7 @@ def added(project, ref, cwd=None):
                 lines.setdefault(path, [])
         elif line.startswith("+") and path is not None:
             lines[path].append(line[1:])
-    new_files = gitx.out(["diff", "--name-only", "--diff-filter=A", "--no-color", *_diff_range(project, ref),
+    new_files = gitx.out(["diff", "--name-only", "--diff-filter=A", "--no-color", *_diff_range(project, ref, cwd),
                           *PRODUCT_SPEC], cwd).splitlines()
     return lines, new_files
 
@@ -64,7 +66,7 @@ def size(project, ref=None, cwd=None):
     Returns (count, excluded paths).
     """
     cwd = cwd or project.root
-    numstat = gitx.git(["diff", "--numstat", "-M", "-z", "--no-color", *_diff_range(project, ref), *PRODUCT_SPEC],
+    numstat = gitx.git(["diff", "--numstat", "-M", "-z", "--no-color", *_diff_range(project, ref, cwd), *PRODUCT_SPEC],
                        cwd).stdout
     tokens, entries, i = numstat.split("\0"), [], 0
     while i < len(tokens):

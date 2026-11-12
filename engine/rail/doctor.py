@@ -40,15 +40,23 @@ def checks(project):
     found.append(("hooks", not missing, "the session-start, guard and notify hooks are wired" if not missing
                   else f"not wired in .claude/settings.json: {', '.join(missing)}; run rail init"))
     permissions = settings.get("permissions", {})
-    expected = [("deny", "Edit(./.rail/journal/**)"), ("deny", "Read(./**/.env)"), ("ask", "Bash(sudo *)"),
+    expected = [("deny", "Edit(./.rail/journal/**)"), ("deny", "Read(./**/.env)"),
                 ("allow", "Bash(rail advance *)"), ("ask", "Bash(rail answer * --owner)")]
     absent = [rule for kind, rule in expected if rule not in permissions.get(kind, [])]
+    # Ask rules prompt in every mode, auto mode included, so these three stop an unattended cloud session. The guard
+    # hook asks the same on a person's own machine, where it matters.
+    pausing = [rule for rule in ("Bash(sudo *)", "Bash(git reset --hard*)", "Bash(git clean -f*)")
+               if rule in permissions.get("ask", [])]
     guard_on_bash = any(g.get("matcher") == "Bash" and "rail hook guard" in json.dumps(g)
                         for g in hooks.get("PreToolUse", []))
     if not guard_on_bash and "guard" not in missing:
         absent.append("the guard hook's Bash matcher")
     found.append(("guard rules", not absent, "the allow, deny and ask rules are in .claude/settings.json" if not absent
                   else f"missing from .claude/settings.json: {', '.join(absent)}; run rail init"))
+    if pausing:
+        found.append(("ask rules", False, f"remove {', '.join(pausing)} from permissions.ask in .claude/settings.json:"
+                                          " they pause unattended cloud sessions, and the guard hook asks the same on"
+                                          " your own machine"))
 
     agents = os.path.join(root, "AGENTS.md")
     has_section = os.path.exists(agents) and any(l.strip() == "## Rail" for l in open(agents).read().splitlines())

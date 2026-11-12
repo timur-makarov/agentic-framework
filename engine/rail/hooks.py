@@ -5,7 +5,7 @@ import os
 import sys
 
 from .project import Project
-from .util import RailError
+from .util import RailError, cloud
 
 
 def _input():
@@ -82,9 +82,10 @@ def guard():
 
     from .forge import github_repo
     repo = github_repo(project) if project.remote else None
-    reason, decision = rules.deny(command, project.base, branch, cwd=cwd, locate=locate, repo=repo), "deny"
+    in_cloud = cloud()
+    reason, decision = rules.deny(command, project.base, branch, cwd=cwd, locate=locate, repo=repo, cloud=in_cloud), "deny"
     if not reason:
-        reason, decision = rules.ask(command, cwd, top), "ask"
+        reason, decision = rules.ask(command, cwd, top, cloud=in_cloud), "ask"
     if reason:
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
                                                  "permissionDecisionReason": f"Rail guard: {reason}."}}))

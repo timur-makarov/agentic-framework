@@ -41,6 +41,18 @@ class Lifecycle(RailTest):
         self.assertIn("Ticket: 1", log)
         self.assertEqual(b.rail("status")["tickets"][0]["state"], "merged")
 
+    def test_the_brief_counts_only_this_tickets_lines_when_the_projects_own_checkout_is_behind(self):
+        # Live on GitHub: after a merge on the remote, the next ticket's brief counted the merged lines as its own.
+        a, b, github = self.github_pair()
+        a.add(ticket())
+        a.rail("next")
+        a.fix_calc("1")
+        a.rail("advance", "1")
+        github.ci("1-fix-add", "success")
+        self.assertEqual(a.rail("advance", "1")["state"], "merged")  # GitHub's merge: a's own main stays behind
+        a.add(ticket(title="Add a status code", scope=("api/**",), check="grep -q 201 api/handlers.py"))
+        self.assertIn("size 0/300", a.rail("next")["action"]["brief"])
+
     def test_a_red_required_check_returns_the_ticket_with_its_output(self):
         a, b, github = self.github_pair()
         a.add(ticket())

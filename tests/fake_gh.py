@@ -43,6 +43,15 @@ def pr_view(state, pr):
     return view
 
 
+def list_view(state, pr):
+    """A pull request as GitHub's list endpoint gives it: merged_at, and no merged flag or mergeable_state."""
+    view = pr_view(state, pr)
+    view.pop("merged", None)
+    view.pop("mergeable_state", None)
+    view["merged_at"] = "2026-11-12T12:00:00Z" if pr.get("merged") else None
+    return view
+
+
 def respond(status, body=None):
     reason = {200: "OK", 201: "Created", 202: "Accepted", 204: "No Content", 404: "Not Found",
               405: "Method Not Allowed", 409: "Conflict", 422: "Unprocessable Entity"}.get(status, "")
@@ -84,7 +93,7 @@ def handle(state, method, path, body):
         found = [p for p in pulls if query.get("state", "open") in ("all", p["state"])]
         if "head" in query:
             found = [p for p in found if p["head"] == query["head"].split(":", 1)[1]]
-        return respond(200, [pr_view(state, p) for p in sorted(found, key=lambda p: -p["number"])])
+        return respond(200, [list_view(state, p) for p in sorted(found, key=lambda p: -p["number"])])
     if len(rest) == 2 and rest[0] == "pulls":
         pr = find_pr(rest[1])
         if not pr:

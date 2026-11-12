@@ -109,9 +109,13 @@ class Fixture:
         with open(self.review_log) as f:
             return [json.loads(line) for line in f]
 
-    def rail(self, *args, cwd=None, session="session-a", expect=0, raw=False):
+    def rail(self, *args, cwd=None, session="session-a", expect=0, raw=False, cloud=False, env_extra=None):
         env = dict(os.environ)
         env.pop("RAIL_TICKET", None)
+        env.pop("GITHUB_ACTIONS", None)
+        env.pop("CLAUDE_CODE_REMOTE_SESSION_ID", None)
+        env["RAIL_CLOUD"] = "1" if cloud else "0"  # the suite itself may run inside a cloud session
+        env.update(env_extra or {})
         env["CLAUDE_CODE_SESSION_ID"] = session
         env["RAIL_FAKE_REVIEWS"] = self.reviews
         env["RAIL_FAKE_LOG"] = self.review_log

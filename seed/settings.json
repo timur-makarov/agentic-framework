@@ -13,6 +13,7 @@
       "Bash(rail intake *)",
       "Bash(rail sweep *)",
       "Bash(rail consult *)",
+      "Bash(rail provision *)",
       "Bash(gh run watch *)"
     ],
     "deny": [
@@ -41,9 +42,7 @@
       "Write(./.rail/journal/**)"
     ],
     "ask": [
-      "Bash(sudo *)",
-      "Bash(git reset --hard*)",
-      "Bash(git clean -f*)",
+      "Bash(rail answer --owner *)",
       "Bash(rail answer * --owner)",
       "Bash(rail answer * --owner *)"
     ]

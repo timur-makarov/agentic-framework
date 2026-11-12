@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from railtest import CONFIG, RailTest, ticket
+from railtest import CONFIG, Fixture, RailTest, ticket
 
 
 def read(path):
@@ -115,6 +115,43 @@ class Notify(RailTest):
 
 
 class Sweep(RailTest):
+    def test_a_merge_commit_counts_once_and_setup_commits_inside_it_are_not_swept(self):
+        # Live on GitHub: the setup pull request was merged with a merge commit, and its three commits were offered
+        # to a sweep at once. What counts is what landed on the base branch.
+        p = Fixture(os.path.join(self.tmp, "merged-setup"), init=False)
+        p.git("add", "-A")
+        p.git("commit", "--quiet", "-m", "start")
+        p.git("checkout", "--quiet", "-b", "setup-rail")
+        p.rail("init")
+        p.write(".rail/config.toml", CONFIG + "\n[sweep]\nafter = 2\n")
+        p.git("add", "-A")
+        p.git("commit", "--quiet", "-m", "Set the project up for Rail")
+        for n in (1, 2, 3):
+            p.write("notes.md", f"setup follow-up {n}\n")
+            p.git("add", "-A")
+            p.git("commit", "--quiet", "-m", f"Setup follow-up {n}")
+        p.git("checkout", "--quiet", "main")
+        p.git("merge", "--quiet", "--no-ff", "-m", "Merge pull request #3 from setup-rail", "setup-rail")
+        self.assertEqual(p.rail("next")["reason"]["code"], "NO_WORK")
+
+        # A person's own merge commit afterwards is one unreviewed change, however many commits it holds.
+        p.git("checkout", "--quiet", "-b", "hotfix")
+        for n in (1, 2, 3):
+            p.write("notes.md", f"hotfix {n}\n")
+            p.git("add", "-A")
+            p.git("commit", "--quiet", "-m", f"Hotfix {n}")
+        p.git("checkout", "--quiet", "main")
+        p.git("merge", "--quiet", "--no-ff", "-m", "Merge the hotfix", "hotfix")
+        self.assertEqual(p.rail("next")["reason"]["code"], "NO_WORK")
+        p.write("notes.md", "one more\n")
+        p.git("add", "-A")
+        p.git("commit", "--quiet", "-m", "A second change by hand")
+        offer = p.rail("next")
+        self.assertEqual((offer["reason"]["code"], offer["unreviewed"]), ("SWEEP", 2))
+        p.queue_reviews({"summary": "Swept.", "findings": []})
+        p.rail("sweep")
+        self.assertIn("hotfix 3", p.briefs()[-1]["brief"])  # the merge's whole change is in the sweep's brief
+
     def test_after_enough_unreviewed_work_a_sweep_turns_findings_into_tickets(self):
         p = self.fixture(config=CONFIG + "\n[sweep]\nafter = 2\n")
         for title, scope, check, path, text in (

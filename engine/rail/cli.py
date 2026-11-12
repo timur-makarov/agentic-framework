@@ -1061,11 +1061,13 @@ class _Parser(argparse.ArgumentParser):
 
 
 def parser():
-    p = _Parser(prog="rail", description="Keeps coding agents on the rail: what is legal next, and what counts as done.")
+    # allow_abbrev=False: `--own` must not pass for `--owner`, which the guard asks a person about.
+    p = _Parser(prog="rail", description="Keeps coding agents on the rail: what is legal next, and what counts as done.",
+                allow_abbrev=False)
     sub = p.add_subparsers(dest="verb", required=True, parser_class=_Parser)
 
     def verb(name, help_, ticket=True):
-        v = sub.add_parser(name, help=help_)
+        v = sub.add_parser(name, help=help_, allow_abbrev=False)
         v.add_argument("--json", action="store_true", help="answer in JSON")
         if ticket:
             v.add_argument("ticket", nargs="?", help="ticket ID or external id")
