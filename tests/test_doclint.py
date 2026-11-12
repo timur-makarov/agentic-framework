@@ -1,4 +1,4 @@
-"""doc-lint (plan, section 13): ARCHITECTURE.md's ## Areas keeps matching the tree."""
+"""doc-lint: ARCHITECTURE.md's ## Areas keeps matching the tree."""
 
 import os
 import sys

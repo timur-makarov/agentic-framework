@@ -41,7 +41,7 @@ CHECK_ADD = "python3 -c \"import sys; sys.path.insert(0, 'src'); import calc; as
 
 
 def ticket(title="Fix add", tier="LOW", scope=("src/**",), check=CHECK_ADD, front=(), body=""):
-    """A ticket file in the plan's format (section 5)."""
+    """A ticket file, in the format rail add reads."""
     scope_list = ", ".join(f'"{s}"' for s in scope)
     lines = ["+++", f'title = "{title}"', f'tier = "{tier}"', f"scope_paths = [{scope_list}]", *front, "+++", "",
              "## Why", "add subtracts instead of adding.", "",
@@ -150,7 +150,7 @@ class Fixture:
 
 
 def check_shape(answer):
-    """Every verb answers in the same shape (plan, section 6)."""
+    """Every verb answers in the same shape."""
     assert answer["schema_version"] == 1, answer
     if not answer["ok"]:
         assert answer["reason"]["code"] and answer["reason"]["message"], answer

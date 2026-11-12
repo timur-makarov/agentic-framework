@@ -1,4 +1,4 @@
-"""Install, rail init, the init task, doctor, the SessionStart hook and rail ci (plan, sections 11, 14 and 15)."""
+"""Install, rail init, the init task, doctor, the SessionStart hook and rail ci."""
 
 import json
 import os

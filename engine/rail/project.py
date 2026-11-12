@@ -127,8 +127,6 @@ class Project:
                 info(m.group(2)).branch = info(m.group(2)).branch or m.group(1)
             elif self.remote and (m := re.match(rf"refs/remotes/{self.remote}/((\d+)-.+)$", ref)):
                 info(m.group(2)).remote_branch = info(m.group(2)).remote_branch or m.group(1)
-            elif self.remote and (m := re.match(rf"refs/remotes/{self.remote}/rail/id/(\d+)$", ref)):
-                info(m.group(1)).id_taken = True  # a project from before the counter branch: one branch per ID
         for nn, label in self.counter()[2].items():
             info(nn).id_taken = True
             info(nn).label = label
@@ -203,7 +201,7 @@ class Project:
     # --- writing ---------------------------------------------------------------
 
     def cache_read(self, kind, key):
-        """The local cache, keyed by ticket, in the git common dir (plan, section 3): notes nothing else needs."""
+        """The local cache, keyed by ticket, in the git common dir: notes nothing else needs."""
         path = os.path.join(self.common, "rail", "cache", kind, key)
         if not os.path.exists(path):
             return None
@@ -291,7 +289,7 @@ class Project:
         With a remote, the ID is taken by moving the counter branch one commit forward with a plain push. Git
         accepts only a fast-forward, so when two clones try at once one push is refused, and that clone reads the
         counter again and takes the next ID. One branch holds every ID: a cloud session can't delete branches, so a
-        branch per ID would stay for ever (plan, section 5).
+        branch per ID would stay for ever.
         """
         nn = start
         if self.remote:

@@ -52,4 +52,4 @@ then `rail docs cloud` and `rail docs loop`.
 
 `engine/` is copied into each project by `rail init`; `seed/` holds the files it copies once; `packs/` holds
 optional features; `tests/` holds the end-to-end tests (`python3 -m unittest discover -s tests`).
-`research/PLAN.md` is the plan, and `CHANGELOG.md` says why each change was made.
+`CHANGELOG.md` says why each change was made.

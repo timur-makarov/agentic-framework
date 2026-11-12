@@ -1,4 +1,4 @@
-"""The guard hook (plan, section 15): what depends on a flag or a refspec anywhere in a Bash command.
+"""The guard hook: what depends on a flag or a refspec anywhere in a Bash command.
 
 Guards prevent mistakes; they are not a boundary. Permission rules in .claude/settings.json cover what a rule
 can express, and this hook covers the rest.
@@ -300,7 +300,7 @@ def _gh_named(raw, words):
 
 
 def deny(line, base, branch, cwd=None, locate=None, repo=None, cloud=False):
-    """Why a command line is denied, or None (plan, section 15).
+    """Why a command line is denied, or None.
 
     The git and gh rules protect this project's branches. With `cwd` and `locate`, a command that clearly runs in
     another repository (after `cd DIR &&`, or with git -C) is left alone: locate(directory) answers (ours, the
@@ -378,7 +378,7 @@ def _outside(target, cwd, top):
 
 
 def ask(line, cwd, top, cloud=False):
-    """Why the person should answer before a command runs, or None (plan, section 15).
+    """Why the person should answer before a command runs, or None.
 
     `rail answer --owner` records a person's decision, so it asks everywhere. The rest protects a person's own
     machine and work: in a cloud session the VM is disposable and an ask would only stop an unattended run.

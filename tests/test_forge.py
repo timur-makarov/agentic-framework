@@ -1,4 +1,4 @@
-"""The forge (plan, sections 7, 10 and 11): pull requests, CI, labels and the merge, on a fake GitHub (fake_gh.py)."""
+"""The forge: pull requests, CI, labels and the merge, on a fake GitHub (fake_gh.py)."""
 
 import json
 import os
@@ -42,7 +42,7 @@ class Lifecycle(RailTest):
         self.assertEqual(b.rail("status")["tickets"][0]["state"], "merged")
 
     def test_the_brief_counts_only_this_tickets_lines_when_the_projects_own_checkout_is_behind(self):
-        # Live on GitHub: after a merge on the remote, the next ticket's brief counted the merged lines as its own.
+        # After a merge on the remote, the next ticket's brief must not count the merged lines as its own.
         a, b, github = self.github_pair()
         a.add(ticket())
         a.rail("next")
@@ -96,7 +96,7 @@ class Lifecycle(RailTest):
 
 class Approvals(RailTest):
     def test_a_backlog_merges_low_and_medium_while_high_waits_on_its_pull_request(self):
-        """Phase 5's done-when: one session runs a LOW, a MEDIUM and a HIGH ticket."""
+        """One session runs a LOW, a MEDIUM and a HIGH ticket."""
         a, b, github = self.github_pair()
         a.add(ticket(title="Fix add"))
         a.add(ticket(title="Add a status code", tier="MEDIUM", scope=("api/**",), check="grep -q 201 api/handlers.py"))
@@ -272,7 +272,7 @@ class Resume(RailTest):
 
 class Desk(RailTest):
     def test_a_wait_is_labelled_at_once_and_its_brief_says_what_to_do_on_github(self):
-        # Live on GitHub: the HIGH ticket's contract got no rail:needs-you while the agent had other work.
+        # The contract's wait gets rail:needs-you even while the agent has other work.
         a, b, github = self.github_pair()
         a.add(ticket(title="Change the config", tier="HIGH", scope=("src/config/**",), check="test -f src/config/app.toml"))
         a.add(ticket(title="Fix add"))

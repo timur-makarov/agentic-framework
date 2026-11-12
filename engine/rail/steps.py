@@ -1,4 +1,4 @@
-"""The steps the engine runs: claim and setup, ship (plan, section 7), the local merge and the PR description."""
+"""The steps the engine runs: claim and setup, ship, the local merge and the PR description."""
 
 import os
 import shutil
@@ -115,7 +115,7 @@ def check(project, nn, ticket, ref, cwd, tier, run, patch_id, accepted=None):
     """
     errors = lint(ticket, expect_id=nn)
     if accepted and not errors:
-        # The contract and tier freeze at acceptance (plan, section 5): only `rail amend` changes them.
+        # The contract and tier freeze at acceptance: only `rail amend` changes them.
         if ticket.contract_hash() != accepted.get("contract"):
             errors.append(f"the contract (Done Contract and scope_paths) differs from the accepted one; change it with"
                           f" rail amend {nn}")
@@ -234,7 +234,7 @@ def ship(project, f, run):
     text = gitx.read_blobs([f"{ref}:{ticket_path(t.id)}"], project.root)[f"{ref}:{ticket_path(t.id)}"]
     tier = check(project, t.id, Ticket(text or ""), ref, wt, f.tier, run, patch_id, accepted=f.accepted)
     if tier is None and run.failure[0] == "verify":
-        # A red base spends no budget (plan, section 7): two tickets that each pass can break main together.
+        # A red base spends no budget: two tickets that each pass can break main together.
         red = base_fails_verify(project)
         if red:
             run.events[-1]["counted"] = False
@@ -260,7 +260,7 @@ def ship_failed_brief(t, run):
 
 
 def describe(project, t, ticket, tier):
-    """The PR title and description (plan, section 9). Locally they are the squash commit's subject and body."""
+    """The PR title and description. Locally they are the squash commit's subject and body."""
     title = ticket.title.strip()
     subject = f"{t.id}: {title[:1].lower()}{title[1:]}"
     run_events = []
@@ -312,7 +312,7 @@ def describe(project, t, ticket, tier):
 
 
 def merge_local(project, f, run):
-    """Squash-merge a shipped ticket into the base branch, with no remote (plan, section 6: Offline)."""
+    """Squash-merge a shipped ticket into the base branch, with no remote."""
     t = f.t
     base_ref = f"refs/heads/{project.base}"
     base_tip = gitx.rev(base_ref, project.root)

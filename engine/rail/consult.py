@@ -1,4 +1,4 @@
-"""The engine's side of the consult pack (plan, sections 7 and 18): it asks the pack and records the answer.
+"""The engine's side of the consult pack: it asks the pack and records the answer.
 
 The pack only advises. The engine writes the `consulted` event and NN-advice.md, because only the engine writes the
 journal, and it keeps the limit of three per ticket.

@@ -1,4 +1,4 @@
-"""State derivation (plan, section 7; SPEC, section 4). State is derived from git and the journal, never stored."""
+"""State derivation. State is derived from git and the journal, never stored."""
 
 import os
 
@@ -12,7 +12,7 @@ SHIP_STEPS = ("rebase", "ticket-lint", "assumptions", "scope", "rules", "migrati
 
 
 def floor(project, scope):
-    """The tier the risk and migration paths set for a scope, and why. Matched at add (plan, section 5)."""
+    """The tier the risk and migration paths set for a scope, and why. Matched at add."""
     cfg = project.config
     if not hasattr(project, "_tracked"):
         listing = gitx.git(["ls-tree", "-r", "--name-only", project.base_ref], project.root, check=False)
@@ -33,7 +33,7 @@ def floor(project, scope):
 
 
 def raised_tier(project, files):
-    """The tier the changed files need, and why. Used at ship (SPEC: tier_raised)."""
+    """The tier the changed files need, and why. Used at ship."""
     cfg = project.config
     if any(match_any(cfg["migration_paths"], f) for f in files):
         return "HIGH", "migration_paths"
@@ -90,14 +90,14 @@ class Facts:
         self.state = self._state()
 
     def _budgets(self, project, events):
-        """Retry budgets and the waits derived from the journal (SPEC section 3, and the waits in section 4)."""
+        """Retry budgets and the waits derived from the journal."""
         budget = project.config["retry"]["budget"]
         attempts, consulted, since = {}, set(), 0
         accepted_at = amended_at = shipped_at = continued_at = -1
         for i, e in enumerate(events):
             kind = e.get("event")
             if kind == "continued" or (kind == "accepted" and e.get("by") == "person"):
-                # A person's act gives a fresh budget (plan, section 10), whether it continues a wait or approves.
+                # A person's act gives a fresh budget, whether it continues a wait or approves.
                 attempts, consulted, since = {}, set(), i
                 if kind == "continued":
                     continued_at = i
@@ -129,7 +129,7 @@ class Facts:
         self.stuck_review = len(runs) >= 2 and all(e.get("detail") == "timeout" for e in runs[-2:])
         self.amend_pending = amended_at > accepted_at
         self.merge_approved = continued_at > shipped_at >= 0
-        # A person's note from `accept` goes into the agent's briefs until the next ship (plan, section 10).
+        # A person's note from `accept` goes into the agent's briefs until the next ship.
         notes = [(i, e) for i, e in enumerate(events) if e.get("note") and (
             e.get("event") == "continued" or (e.get("event") == "accepted" and e.get("by") == "person"))]
         self.person_note = notes[-1][1]["note"] if notes and notes[-1][0] > shipped_at else None
@@ -180,7 +180,7 @@ class Facts:
         if t.merged or (self.pr and (self.pr.get("merged") or self.pr.get("merged_at"))):
             return "merged"  # GitHub's list of pull requests carries merged_at, and no merged flag
         if self.dropped_event or not t.name:
-            return "dropped"  # a dropped event, or the ID ref is all that is left (SPEC, section 4)
+            return "dropped"  # a dropped event, or the ID is all that is left: its branch is gone
         if self.pr and self.pr.get("state") == "closed":
             return "dropped"  # the PR was closed without a merge
         if not self.accepted:

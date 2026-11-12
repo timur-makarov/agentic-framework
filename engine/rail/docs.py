@@ -1,4 +1,4 @@
-"""`rail docs [topic]`: the framework's docs, shipped inside the engine (plan, section 13).
+"""`rail docs [topic]`: the framework's docs, shipped inside the engine.
 
 Pages are markdown files in engine/docs. The config and CLI reference pages are generated from the engine itself,
 so they can't drift from what the engine reads.
@@ -11,7 +11,7 @@ from . import config as configmod
 
 DOCS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs")
 
-# Every config field names its reader (plan, section 1). A test checks this covers config.DEFAULTS.
+# Every config field names its reader. A test checks this covers config.DEFAULTS.
 READERS = {
     "base_branch": "claim, ship, CI and the merge: the branch tickets start from and merge into",
     "auto_tiers": "acceptance and the merge: these tiers are accepted and merged with no person",

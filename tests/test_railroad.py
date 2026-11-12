@@ -1,4 +1,4 @@
-"""End-to-end railroad tests on fixture projects (plan, section 22)."""
+"""End-to-end railroad tests on fixture projects."""
 
 import json
 import os
@@ -25,7 +25,7 @@ def failed_step(answer):
 
 
 class AddToMerge(RailTest):
-    """Phase 1's done-when: on the new core, a ticket runs from add to a local merge."""
+    """A ticket runs from add to a local merge."""
 
     def test_low_ticket_runs_from_add_to_local_merge(self):
         p = self.fixture()
@@ -296,7 +296,7 @@ class Parallel(RailTest):
         self.assertEqual(p.rail("next", session="a")["ticket"], "1")
         other = p.rail("next", session="b")
         self.assertEqual(other["reason"]["code"], "NO_WORK")
-        self.assertEqual(other["resumable"], ["1"])
+        self.assertEqual([h["ticket"] for h in other["held"]], ["1"])
         self.assertEqual(p.rail("next", "--ticket", "2", session="b")["reason"]["code"], "SCOPE_OVERLAP")
         self.assertEqual(p.rail("next", session="a")["ticket"], "1")
 
@@ -309,7 +309,7 @@ class Parallel(RailTest):
         claims = [json.loads(l) for l in p.git("show", "1-fix-add:.rail/journal/1-events.jsonl").splitlines()
                   if json.loads(l)["event"] == "claimed"]
         self.assertEqual([(c["session"], c["takeover"]) for c in claims], [("a", False), ("b", True)])
-        self.assertEqual(p.rail("next", session="a")["resumable"], ["1"])
+        self.assertEqual([h["ticket"] for h in p.rail("next", session="a")["held"]], ["1"])
 
 
 class Remote(RailTest):
@@ -349,12 +349,6 @@ class Remote(RailTest):
         self.assertEqual(a.add(ticket())["ticket"], "1")
         self.assertEqual(b.add(ticket(title="Other", scope=("api/**",)))["ticket"], "2")
         self.assertEqual(b.git("ls-remote", "origin", "refs/heads/rail/*").count("refs/heads/rail/"), 1)
-
-    def test_a_project_with_the_old_branch_per_id_keeps_counting_from_them(self):
-        a, b = self.remote_pair()
-        a.git("push", "--quiet", "origin", "main:refs/heads/rail/id/7")  # as an engine before the counter left it
-        self.assertEqual(a.add(ticket())["ticket"], "8")
-        self.assertEqual(b.add(ticket(title="Other", scope=("api/**",)))["ticket"], "9")
 
     def test_a_dropped_ticket_whose_branch_was_deleted_keeps_its_id_and_its_text(self):
         a, b = self.remote_pair()

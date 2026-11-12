@@ -1,4 +1,4 @@
-"""The sweep (plan, section 12): it reviews what shipped without a review, and its output is tickets, never edits.
+"""The sweep: it reviews what shipped without a review, and its output is tickets, never edits.
 
 A sweep is itself a LOW ticket. Its squash commit carries a `Sweep:` trailer, which marks where the next one starts.
 """

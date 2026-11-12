@@ -1,4 +1,4 @@
-"""The guard hook (plan, section 15), fed the JSON Claude Code sends before a Bash command runs."""
+"""The guard hook, fed the JSON Claude Code sends before a Bash command runs."""
 
 import json
 import os
@@ -69,7 +69,7 @@ class Deny(RailTest):
             self.assertEqual(decide(p, command), "deny", command)
 
     def test_a_cd_the_guard_cannot_follow_leaves_the_rules_in_force(self):
-        # Sweep 6 on the live project (F1): each of these passed, because the guard believed the cd.
+        # None of these moves the shell to another repository for certain, so the guard must not believe the cd.
         p = self.fixture()
         other = os.path.join(self.tmp, "other")
         subprocess.run(["git", "init", "--quiet", "-b", "main", other], check=True)
@@ -86,7 +86,7 @@ class Deny(RailTest):
             self.assertEqual(decide(p, command), "deny", command)
 
     def test_a_git_command_aimed_at_this_repository_from_elsewhere_is_this_projects(self):
-        # Sweep 6 (F2): --git-dir, GIT_DIR and a push to this project's URL or folder, from another directory.
+        # --git-dir, GIT_DIR and a push to this project's URL or folder reach it from any directory.
         a, b, github = self.github_pair()  # the project is acme/app on the fake GitHub
         other = os.path.join(self.tmp, "other")
         subprocess.run(["git", "init", "--quiet", "-b", "main", other], check=True)
@@ -113,12 +113,12 @@ class Deny(RailTest):
         subprocess.run(["git", "init", "--quiet", "-b", "main", other], check=True)
         for command in ("gh api -X PUT repos/acme/app/pulls/3/merge-async", "gh api -X PUT repos/ACME/app/pulls/3/merge",
                         "gh pr merge 3", "gh pr merge 3 -R acme/app",
-                        # Sweep 6 (F3): this project named from another directory.
+                        # This project named from another directory.
                         f"cd {other} && gh pr merge 5 -R acme/app", f"cd {other} && gh pr merge 5 --repo=acme/app",
                         f"cd {other} && gh pr merge https://github.com/acme/app/pull/5",
                         f"cd {other} && GH_REPO=acme/app gh pr merge 5",
                         f"cd {other} && gh api -X PUT repos/acme/app/pulls/5/merge",
-                        # Sweep 6 (F4): words that only look like another repository.
+                        # Words that only look like another repository.
                         "gh pr merge 5 --body /repos/a/b/", "gh api -X PUT repos/{owner}/{repo}/pulls/5/merge",
                         "gh api -X PUT repos/:owner/:repo/pulls/5/merge", "gh pr merge 5 -R github.com/acme/app",
                         "gh api -X PUT -H 'X: repos/a/b/' repos/acme/app/pulls/5/merge"):
@@ -129,7 +129,7 @@ class Deny(RailTest):
             self.assertIsNone(decide(a, command), command)
 
     def test_the_owners_decision_on_a_finding_always_asks(self):
-        # Sweep 6 (F5): the flag first, or by path, dodged the ask rules; an abbreviation dodged them too.
+        # The flag first, or rail by path, would dodge a permission rule; an abbreviation would dodge both.
         p = self.fixture()
         for command in ("rail answer --owner 5 F1 declined why", "rail answer 5 F1 declined why --owner",
                         ".rail/bin/rail answer 5 F1 fixed done --owner", "cd x && rail answer 5 F1 parked --owner"):

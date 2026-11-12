@@ -1,4 +1,4 @@
-"""rail docs (plan, section 13): the framework's docs, read from the engine."""
+"""rail docs: the framework's docs, read from the engine."""
 
 import os
 import sys

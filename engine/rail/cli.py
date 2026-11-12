@@ -1,4 +1,4 @@
-"""The `rail` verbs. Every verb answers in one JSON shape (plan, section 6) with --json, or as text without it.
+"""The `rail` verbs. Every verb answers in one JSON shape with --json, or as text without it.
 
 Exit codes: 0 when the command worked (read `owner`), 2 for a usage error, 3 when a step failed.
 """
@@ -51,7 +51,7 @@ def ticket_from_cwd(project):
 
 
 def requested(project, args):
-    """--ticket, then RAIL_TICKET, then the worktree the command runs in (plan, section 6)."""
+    """--ticket, then RAIL_TICKET, then the worktree the command runs in."""
     return getattr(args, "ticket", None) or os.environ.get("RAIL_TICKET") or ticket_from_cwd(project)
 
 
@@ -86,7 +86,7 @@ def ensure_local(project, t):
 
 
 def claim(project, t, takeover=False):
-    """A claim is a commit with the `claimed` event on the ticket branch, pushed (plan, section 5)."""
+    """A claim is a commit with the `claimed` event on the ticket branch, pushed."""
     for _ in range(3):
         ensure_local(project, t)
         before = gitx.rev(t.ref, project.root)
@@ -133,7 +133,7 @@ def contract_pr(f):
 
 
 def ensure_pr(project, f, receipts):
-    """Every wait after add has a PR to label (plan, section 7): a contract PR at add for tiers outside auto_tiers,
+    """Every wait after add has a PR to label: a contract PR at add for tiers outside auto_tiers,
     and a PR at claim for the rest."""
     from .forge import ForgeError
 
@@ -161,7 +161,7 @@ def ensure_pr(project, f, receipts):
 
 
 def update_pr(project, f, receipts):
-    """At ship, the PR's title loses [contract] and its description becomes the ticket's (plan, section 9)."""
+    """At ship, the PR's title loses [contract] and its description becomes the ticket's."""
     from .forge import ForgeError
 
     if not f.pr_open or not f.shipped:
@@ -208,7 +208,7 @@ def transition(project, f, code):
         tickets, facts = load(project)
         ensure_pr(project, facts[t.id], run.steps)
     elif code == "GO":
-        # A person's rail:go: it approves a contract or an amend, or continues any other wait (plan, section 10).
+        # A person's rail:go: it approves a contract or an amend, or continues any other wait.
         note = person_comments(project, f) or None
         ensure_local(project, t)
         if f.state == "new" or f.amend_pending:
@@ -219,7 +219,7 @@ def transition(project, f, code):
         for label in ("rail:go", "rail:needs-you"):
             project.forge.remove_label(f.pr["number"], label)
     elif code == "REBASE_BEHIND":
-        # The base requires up-to-date branches: rebase the shipped PR with no agent work (plan, section 11).
+        # The base requires up-to-date branches: rebase the shipped PR with no agent work.
         ensure_local(project, t)
         if not t.worktree:
             make_ready(project, t, run)
@@ -282,8 +282,8 @@ def cleanup(project, tickets, facts):
 
 
 def create_ticket(project, text):
-    """Take the next ID and make the ticket's branch with the ticket file, without touching any checkout (plan,
-    section 5). A ticket that passes lint on an auto tier is accepted at once. Returns (id, branch, push result)."""
+    """Take the next ID and make the ticket's branch with the ticket file, without touching any checkout. A ticket
+    that passes lint on an auto tier is accepted at once. Returns (id, branch, push result)."""
     base_tip = gitx.rev(project.base_ref, project.root)
     if not base_tip:
         raise RailError(f"the base branch '{project.base}' has no commits yet")
@@ -340,15 +340,14 @@ def cmd_add(project, args):
 
 
 def stub(title, request, external_id, caused_by=""):
-    """An intake ticket: the request verbatim, with the contract and tier for the agent to write (plan, section 6)."""
+    """An intake ticket: the request verbatim, with the contract and tier for the agent to write."""
     return "\n".join(["+++", f"title = {json.dumps(title)}", 'tier = ""', "scope_paths = []",
                       f"external_id = {json.dumps(external_id)}", f"caused_by = {json.dumps(caused_by)}", "+++", "",
                       "## Request", request.strip(), "", "## Why", "", "## Done Contract", ""])
 
 
 def caused_by(project, request):
-    """An issue from a failed dev deploy starts with `Commit: <sha>`; the commit's Ticket: trailer caused it
-    (plan, section 16)."""
+    """An issue from a failed dev deploy starts with `Commit: <sha>`; the commit's Ticket: trailer caused it."""
     m = re.match(r"\s*Commit:\s*([0-9a-f]{7,40})", request)
     if not m:
         return ""
@@ -368,7 +367,7 @@ def intake_one(project, facts, title, request, external_id):
 
 def cmd_intake(project, args):
     """`rail intake github` pulls issues labelled rail; `rail intake --external-id KEY --title T --brief FILE` takes
-    anything else. Both are idempotent by external_id (plan, section 6)."""
+    anything else. Both are idempotent by external_id."""
     project.sync()
     tickets, facts = load(project)
     created, skipped = [], []
@@ -406,7 +405,7 @@ def accepted_event(nn, ticket, tier, by, via, note=None):
 
 
 def cmd_accept(project, args):
-    """A person's one act that continues any wait (plan, section 10): approve a contract or an amend, or continue."""
+    """A person's one act that continues any wait: approve a contract or an amend, or continue."""
     project.sync()
     tickets, facts = load(project)
     nn = project.find(args.ticket or requested(project, args), tickets).id
@@ -433,7 +432,7 @@ def cmd_accept(project, args):
 
 
 def cmd_answer(project, args):
-    """Record how a review finding ended: fixed, declined with a reason, or parked (plan, section 8)."""
+    """Record how a review finding ended: fixed, declined with a reason, or parked."""
     project.sync()
     tickets, facts = load(project)
     f = facts[project.find(args.ticket, tickets).id]
@@ -455,7 +454,7 @@ def cmd_answer(project, args):
 
 
 def cmd_amend(project, args):
-    """Change a frozen contract (plan, section 5): the Done Contract, the scope or the tier, which only rises."""
+    """Change a frozen contract: the Done Contract, the scope or the tier, which only rises."""
     project.sync()
     tickets, facts = load(project)
     f = facts[project.find(args.ticket or requested(project, args), tickets).id]
@@ -536,7 +535,7 @@ def cmd_amend(project, args):
 
 
 def cmd_sweep(project, args):
-    """A sweep ticket over what merged without a review: the free part and one review pass (plan, section 12)."""
+    """A sweep ticket over what merged without a review: the free part and one review pass."""
     from . import sweep
 
     project.sync()
@@ -565,7 +564,7 @@ def cmd_sweep(project, args):
 
 
 def cmd_consult(project, args):
-    """The consult pack on request: a different model's advice on one question (plan, section 18)."""
+    """The consult pack on request: a different model's advice on one question."""
     from . import consult
 
     if not os.path.exists(consult.pack(project)):
@@ -584,7 +583,7 @@ def cmd_consult(project, args):
 
 
 def red_base_ticket(project, facts):
-    """When verify fails on the base branch, one fix ticket for the base (plan, section 7)."""
+    """When verify fails on the base branch, one fix ticket for the base."""
     red = project.cache_read("red-base", "base")
     if not red or red != gitx.rev(project.base_ref, project.root):
         return None
@@ -595,7 +594,7 @@ def red_base_ticket(project, facts):
 
 def auto_intake(project, facts):
     """Issues labelled rail come in with every `next` when GitHub can be reached, so labelling an issue is the
-    whole act of handing work over (plan, section 6). Returns the receipts of the tickets it made."""
+    whole act of handing work over. Returns the receipts of the tickets it made."""
     from .forge import ForgeError
 
     if not (project.forge and project.forge.ok):
@@ -637,7 +636,7 @@ def cmd_next(project, args):
         return from_facts(f, took_in + receipts, leftovers=leftovers)
 
     tickets, facts = load(project)
-    # A person's inbox is the label (plan, section 10): every wait gets it now, not only when the agent runs dry.
+    # A person's inbox is the label: every wait gets it now, not only when the agent runs dry.
     for f in facts.values():
         code, owner, _ = first_match(f)
         if owner == "human":
@@ -667,7 +666,7 @@ def cmd_next(project, args):
                          **({"session": f.claimed["session_url"]} if f.claimed.get("session_url") else {})})
         elif code == "CI_WAIT" and f.pushed:
             ci.append(f)
-    extra = {"waits": waits, "resumable": [h["ticket"] for h in held], "held": held, "leftovers": leftovers}
+    extra = {"waits": waits, "held": held, "leftovers": leftovers}
     if ci:
         run_id = ci_run(project, ci[0])
         if run_id:
@@ -696,7 +695,7 @@ def cmd_next(project, args):
 
 
 def label_wait(project, f, code):
-    """The inbox is one saved search, is:open label:rail:needs-you (plan, section 10): label each wait's PR."""
+    """The inbox is one saved search, is:open label:rail:needs-you: label each wait's PR."""
     from .forge import ForgeError
 
     if f.pr_open and code != "HOLD" and "rail:needs-you" not in f.labels:
@@ -747,7 +746,7 @@ def commit(project, f, run, message):
 
 
 def after_failure(project, nn, run):
-    """At the retry budget, consult advises once before the agent's last attempt (plan, section 7)."""
+    """At the retry budget, consult advises once before the agent's last attempt."""
     from . import consult
 
     tickets, facts = load(project)
@@ -774,7 +773,7 @@ def review_stage(project, f, run):
 
 
 def merge_stage(project, f, run):
-    """Squash-merge with no remote. When the base moved since ship, rebase and ship again first (plan, section 10)."""
+    """Squash-merge with no remote. When the base moved since ship, rebase and ship again first."""
     base_tip = gitx.rev(project.base_ref, project.root)
     if not gitx.ok(["merge-base", "--is-ancestor", base_tip, f.t.ref], project.root):
         steps.ship(project, f, run)
@@ -789,7 +788,7 @@ def merge_stage(project, f, run):
 
 
 def forge_merge(project, f, receipts):
-    """auto_tiers, once CI is green: the async merge endpoint, the head pinned with sha (plan, section 7). The request
+    """auto_tiers, once CI is green: the async merge endpoint, the head pinned with sha. The request
     is noted in the local cache, not the journal, because a journal commit would move the head CI just passed."""
     import time
 
@@ -860,8 +859,9 @@ def cmd_advance(project, args):
             tickets, facts = load(project)
             return from_facts(facts[nn], receipts, leftovers=leftovers, merge_commit=merged)
         else:
-            if first and f.state == "in-ci":
-                receipts.append({"step": "ci", "status": "unavailable", "detail": "the forge comes in Phase 5"})
+            if first and f.state == "in-ci" and not f.forge:
+                receipts.append({"step": "ci", "status": "unavailable", "detail": "GitHub can't be reached, so CI and"
+                                                                                  " the merge wait"})
             break
         first = False
         commit(project, f, run, stage if run.ok else f"{stage} failed")
@@ -967,7 +967,7 @@ def cmd_drop(project, args):
 
 def release_issue(project, f):
     """A dropped ticket from an issue: take the rail label off the issue and say so, so intake doesn't make the
-    ticket again. Labelling the issue again is how to retry (plan, section 7)."""
+    ticket again. Labelling the issue again is how to retry."""
     from .forge import ForgeError
 
     external = (f.ticket.get("external_id", "") if f.ticket else "") or ""
@@ -1008,7 +1008,7 @@ def cmd_init(args):
 
 
 def init_task(project):
-    """The first `rail next` returns the init task until the project's config is on the base branch (plan, section 14)."""
+    """The first `rail next` returns the init task until the project's config is on the base branch."""
     if gitx.read_blobs([f"{project.base_ref}:.rail/config.toml"], project.root).get(f"{project.base_ref}:.rail/config.toml"):
         return None
     from .init import INIT_TASK, INIT_TASK_CLOUD
@@ -1061,7 +1061,7 @@ def run_provision(project, run):
 
 
 def provision_task(project):
-    """In a cloud session, the first `next` on a machine that hasn't been provisioned says so (plan, section 14)."""
+    """In a cloud session, the first `next` on a machine that hasn't been provisioned says so."""
     if not cloud() or provisioned(project):
         return None
     return answer(owner="agent", code="PROVISION", cwd=".",
@@ -1114,7 +1114,7 @@ def cmd_doctor(project, args):
 
 
 def cmd_ci(project, args):
-    """The `rail` check: the ship checks again, on the PR head (plan, section 11). It writes nothing."""
+    """The `rail` check: the ship checks again, on the PR head. It writes nothing."""
     from .state import raised_tier
 
     head = "HEAD"
@@ -1267,7 +1267,7 @@ def parser():
 
 
 def run_pack(argv):
-    """`rail NAME ...` runs a pack's bin/NAME (plan, section 18). None when NAME isn't an installed pack."""
+    """`rail NAME ...` runs a pack's bin/NAME. None when NAME isn't an installed pack."""
     if not argv or argv[0] in VERBS or argv[0].startswith("-") or argv[0] == "hook":
         return None
     try:

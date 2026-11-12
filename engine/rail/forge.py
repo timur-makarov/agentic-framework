@@ -1,4 +1,4 @@
-"""`forge`: the engine's only way to talk to GitHub, through `gh api` REST calls (plan, section 11).
+"""`forge`: the engine's only way to talk to GitHub, through `gh api` REST calls.
 
 `gh pr` and `gh issue` use GraphQL, which Claude Code cloud sessions block, so they are never used.
 """
@@ -75,7 +75,7 @@ def log_tail(log, lines=60):
 
 
 def doctor_checks(project, repo):
-    """[(name, passed or None, detail)] for the GitHub side of the setup (plan, sections 11 and 14)."""
+    """[(name, passed or None, detail)] for the GitHub side of the setup."""
     found = []
     try:
         info = api("GET", f"repos/{repo}")
@@ -142,7 +142,7 @@ def create_labels(repo):
 
 
 class Forge:
-    """The GitHub side of the tickets, read once per command (plan, sections 7, 10 and 11).
+    """The GitHub side of the tickets, read once per command.
 
     `ok` is False when there is no GitHub remote or the remote can't be reached; the steps that need the forge
     then report `unavailable`, and state comes from git and the journal alone.

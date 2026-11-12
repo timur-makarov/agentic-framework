@@ -1,4 +1,4 @@
-"""Rail in a Claude Code cloud session (plan, section 26): provisioning, and what differs from a person's machine."""
+"""Rail in a Claude Code cloud session: provisioning, and what differs from a person's machine."""
 
 import json
 import os

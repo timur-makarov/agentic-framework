@@ -1,4 +1,4 @@
-"""`.rail/config.toml`: the whole config surface (plan, section 4), with defaults and type checks."""
+"""`.rail/config.toml`: the whole config surface, with defaults and type checks."""
 
 import copy
 import difflib

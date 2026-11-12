@@ -1,4 +1,4 @@
-"""Intake, the red base, the notify hook and the sweep (plan, sections 6, 7, 12 and 15)."""
+"""What keeps a backlog moving with nobody at the desk: intake, the red base, the notify hook and the sweep."""
 
 import json
 import os
@@ -116,8 +116,8 @@ class Notify(RailTest):
 
 class Sweep(RailTest):
     def test_a_merge_commit_counts_once_and_setup_commits_inside_it_are_not_swept(self):
-        # Live on GitHub: the setup pull request was merged with a merge commit, and its three commits were offered
-        # to a sweep at once. What counts is what landed on the base branch.
+        # A setup pull request merged with a merge commit: its own commits are not swept. What counts is what
+        # landed on the base branch.
         p = Fixture(os.path.join(self.tmp, "merged-setup"), init=False)
         p.git("add", "-A")
         p.git("commit", "--quiet", "-m", "start")

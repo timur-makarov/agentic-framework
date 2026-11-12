@@ -1,4 +1,4 @@
-"""Review, contract and retries (plan, sections 5, 7, 8, 9 and 12; SPEC). The reviewer is a stand-in (fake_reviewer.py)."""
+"""Review, contract and retries. The reviewer is a stand-in (fake_reviewer.py)."""
 
 import json
 import os
@@ -207,7 +207,6 @@ class Retry(RailTest):
 
 class Contract(RailTest):
     def test_weakening_a_check_after_claim_fails_until_amended(self):
-        """Section 20, bug 4."""
         p = self.fixture()
         p.add(ticket())
         p.rail("next")
@@ -223,7 +222,6 @@ class Contract(RailTest):
         self.assertEqual(p.rail("advance", "1")["state"], "merge-ready")
 
     def test_lowering_the_tier_after_claim_fails(self):
-        """Section 20, bug 3."""
         p = self.fixture()
         p.add(ticket(tier="MEDIUM"))
         p.rail("next")
@@ -253,7 +251,6 @@ class Contract(RailTest):
 
 class Bugs(RailTest):
     def test_a_hand_written_review_file_is_ignored_and_the_reviewer_runs(self):
-        """Section 20, bug 1."""
         p = self.fixture()
         p.add(ticket(tier="MEDIUM"))
         p.rail("next")
@@ -266,7 +263,6 @@ class Bugs(RailTest):
         self.assertEqual(doc["runs"][0]["patch_id"] != "x", True)
 
     def test_a_commit_after_the_review_is_reviewed_again(self):
-        """Section 20, bug 2."""
         p = self.fixture()
         p.add(ticket(tier="MEDIUM"))
         p.rail("next")
@@ -279,7 +275,6 @@ class Bugs(RailTest):
         self.assertEqual(len(p.briefs()), 2)
 
     def test_rules_check_added_lines_even_with_color_ui_always(self):
-        """Section 20, bug 5, and the default rule."""
         rules = '\n[[rules]]\nid = "no-new-suppressions"\nforbid = ["eslint-disable", "@ts-ignore", "# noqa", ".skip("]\n' \
                 'fix = "Fix the cause instead of silencing the check."\n'
         p = self.fixture(config=CONFIG + rules)

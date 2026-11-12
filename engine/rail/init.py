@@ -1,4 +1,4 @@
-"""`rail init`: set a project up (plan, section 14). It never overwrites a file of the project's."""
+"""`rail init`: set a project up. It never overwrites a file of the project's."""
 
 import json
 import os
@@ -52,7 +52,7 @@ Finally run `rail doctor` and make the one-time settings it lists."""
 
 
 # In a cloud session the machine is nobody's own, and the person is usually away: the agent sets everything up and
-# the person confirms it once, by merging the pull request (plan, section 26).
+# the person confirms it once, by merging the pull request.
 INIT_TASK_CLOUD = """Rail is installed, and this project isn't set up for it yet: .rail/config.toml isn't on {base}.
 This is a cloud session: the machine is yours to change. Set the project up yourself; the person confirms it all at
 once by reading and merging one pull request. Read the repository to learn its stack, then:

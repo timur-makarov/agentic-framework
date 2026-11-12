@@ -1,4 +1,4 @@
-"""Structure rules on added lines and files (plan, section 12) and the size count (plan, section 9)."""
+"""Structure rules on added lines and files and the size count."""
 
 import os
 
@@ -59,7 +59,7 @@ def violations(project, ref, cwd=None):
 
 
 def size(project, ref=None, cwd=None):
-    """Changed lines, added plus deleted (plan, section 9). Renames count only their edits and binary files count
+    """Changed lines, added plus deleted. Renames count only their edits and binary files count
     zero; files marked linguist-generated or -diff, lockfiles and [size] exclude are left out.
 
     With no ref, it counts the worktree in `cwd` against the merge base, uncommitted changes included.

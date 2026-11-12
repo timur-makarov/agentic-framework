@@ -1,4 +1,4 @@
-"""`rail doctor`: check the setup and print what's missing (plan, section 14)."""
+"""`rail doctor`: check the setup and print what's missing."""
 
 import json
 import os
@@ -104,7 +104,7 @@ def checks(project):
 
 
 def cloud_checks(project):
-    """What a Claude Code cloud session needs beyond the repository (plan, section 26)."""
+    """What a Claude Code cloud session needs beyond the repository."""
     from .cli import provisioned
 
     found = [("cloud", True, "a Claude Code cloud session: Rail installs what the checks need here")]

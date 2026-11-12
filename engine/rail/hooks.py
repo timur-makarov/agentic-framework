@@ -1,4 +1,4 @@
-"""Claude Code hooks (plan, section 15). They stay tool-neutral: stdin JSON in, text out, and they never fail a session."""
+"""Claude Code hooks. They stay tool-neutral: stdin JSON in, text out, and they never fail a session."""
 
 import json
 import os
@@ -53,7 +53,7 @@ def session_start():
 
 
 def guard():
-    """PreToolUse on Bash: deny what a permission rule can't express (plan, section 15)."""
+    """PreToolUse on Bash: deny what a permission rule can't express."""
     from . import gitx, guard as rules
 
     data = _input()
@@ -102,7 +102,7 @@ NEEDS = {
 
 
 def terminal_sequence(message, term_program=None, term=None):
-    """A desktop notification for the terminal in use (plan, section 15), or a bell."""
+    """A desktop notification for the terminal in use, or a bell."""
     term_program = term_program if term_program is not None else os.environ.get("TERM_PROGRAM", "")
     term = term if term is not None else os.environ.get("TERM", "")
     message = message.replace("\x07", "").replace("\x1b", "")
