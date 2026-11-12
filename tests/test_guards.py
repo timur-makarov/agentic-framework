@@ -9,11 +9,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from railtest import RailTest
 
 
-def decide(p, command, cwd=None, cloud=False):
+def decide(p, command, cwd=None, cloud=False, env_extra=None):
     """The guard's decision for a command: 'deny', 'ask', or None to let it run."""
     payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": command},
                "cwd": cwd or p.root}
-    env = dict(os.environ, RAIL_CLOUD="1" if cloud else "0")
+    env = dict(os.environ, RAIL_CLOUD="1" if cloud else "0", **(env_extra or {}))
     result = subprocess.run([p.path(".rail", "bin", "rail"), "hook", "guard"], input=json.dumps(payload),
                             capture_output=True, text=True, cwd=cwd or p.root, env=env)
     assert result.returncode == 0, result.stderr
@@ -67,6 +67,27 @@ class Deny(RailTest):
         for command in (f"cd {other} && cd {p.root} && git push origin main", "cd $ELSEWHERE && git push origin main",
                         "cd /no/such/dir; git push origin main", f"cd {other} && git -C {p.root} push origin main"):
             self.assertEqual(decide(p, command), "deny", command)
+
+    def test_a_variable_is_not_read_from_the_hooks_own_environment(self):
+        # The hook's environment isn't the shell's at that point of the command: the shell moves $OLDPWD with each
+        # cd, and the command may set any variable itself. Only ~, $HOME and $PWD (where the guard followed) count.
+        p = self.fixture()
+        other = os.path.join(self.tmp, "other")
+        subprocess.run(["git", "init", "--quiet", "-b", "main", other], check=True)
+        theirs = {"OLDPWD": other, "ELSEWHERE": other}
+        for command in (f'cd {other} && cd "$OLDPWD" && git push origin main',
+                        f"cd {other} && cd ${{OLDPWD}} && git push origin main",
+                        "cd $ELSEWHERE && git push origin main", "ELSEWHERE=.; cd $ELSEWHERE && git push origin main",
+                        "git -C $ELSEWHERE push origin main", 'cd "$PWD" && git push origin main'):
+            self.assertEqual(decide(p, command, env_extra=theirs), "deny", command)
+        for command in (f'cd {other} && cd "$PWD" && git push origin main',
+                        f"cd {other} && git -C $PWD push origin main"):
+            self.assertIsNone(decide(p, command, env_extra=theirs), command)
+        # rm -r: a path under a variable the guard can't follow counts as outside the worktree.
+        inside = {"OLDPWD": p.root, "BUILD": p.path("build")}
+        for command in ('cd /tmp && cd "$OLDPWD" && rm -rf build', "rm -rf $BUILD", 'cd /tmp && rm -rf "$PWD/build"'):
+            self.assertEqual(decide(p, command, env_extra=inside), "ask", command)
+        self.assertIsNone(decide(p, 'rm -rf "$PWD/build"', env_extra=inside))
 
     def test_a_cd_the_guard_cannot_follow_leaves_the_rules_in_force(self):
         # None of these moves the shell to another repository for certain, so the guard must not believe the cd.

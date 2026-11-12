@@ -81,3 +81,4 @@ One line for each change, saying why.
 - Hold a ticket while an engine command works in its worktree, and make saves skip a held ticket: a save hook that fired while advance was inside a review pushed the reviewer's scratch files, and the reset after the review left the branch behind that push.
 - Stop rail next crashing when it runs with no session id in a clone where a Claude session has started: it read the session marker's folder as a file.
 - Leave the machine's link and hooks alone when provision runs from a ticket's copy of an engine that differs from the project's own: the hooks call the project's engine, and one that doesn't know them would fail on every tool call.
+- Stop the guard reading variables from its own environment when it follows a command: `cd OTHER && cd "$OLDPWD" && git push origin main` was allowed when the hook inherited an OLDPWD outside the project. It follows only ~, $HOME and $PWD now.
