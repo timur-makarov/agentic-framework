@@ -233,7 +233,21 @@ class Deny(RailTest):
                         "bash -c 'export GH_REPO=someone/else'; gh pr merge 5",
                         "declare GH_REPO=someone/else; gh pr merge 5"):
             self.assertEqual(decide(a, command), "deny", command)
-        self.assertIsNone(decide(a, "GH_REPO=someone/else gh pr merge 3"))
+        # GH_REPO in front of the command is no proof either: a wrapper may unset it, and gh api reads it only to
+        # fill {owner}/{repo}. -R names the repository for certain.
+        for command in ("GH_REPO=someone/else gh pr merge 3", "GH_REPO=someone/else env --unset=GH_REPO gh pr merge 5",
+                        "GH_REPO=someone/else env -uGH_REPO gh pr merge 5", 'GH_REPO=someone/else env -i PATH="$PATH" gh pr merge 5',
+                        "GH_REPO=someone/else gh api -X PUT repositories/42/pulls/5/merge",
+                        "gh api -X PUT repositories/42/pulls/5/merge -f commit_title=repos/someone/else/z",
+                        "gh api -X PUT repositories/42/pulls/5/merge -f x=repos/someone/else/pulls/5/merge",
+                        "GH_REPO=someone/else gh api -X PUT repos/{owner}/{repo}/pulls/5/merge",
+                        "O=acme; gh pr merge 5 -R $O/app", "gh api -X PUT repos/acme/ap${x}p/pulls/5/merge",
+                        "GH_REPO=$R gh pr merge 5"):
+            self.assertEqual(decide(a, command), "deny", command)
+        for command in ("gh pr merge 3 -R someone/else", "GH_REPO=acme/app gh pr merge 3 -R someone/else --squash".replace("acme/app", "x/y"),
+                        "gh api -X PUT repos/someone/else/pulls/3/merge -f commit_title=done",
+                        "gh api -X PUT /repos/someone/else/pulls/3/merge-async"):
+            self.assertIsNone(decide(a, command), command)
         # It is another repository's only when every word that names one agrees and nothing points here.
         for command in ("GH_REPO=someone/else GH_REPO= gh pr merge 5", "GH_REPO=someone/else GH_REPO=acme/app gh pr merge 5",
                         "GH_REPO=someone/else gh pr merge --squash https://github.com/acme/app/pull/5",
@@ -244,7 +258,6 @@ class Deny(RailTest):
                         "gh api -iF x=repos/someone/else/k -X PUT repos/{owner}/{repo}/pulls/5/merge",
                         "gh api -if repos/someone/else/k=v -X PUT repos/:owner/:repo/pulls/5/merge"):
             self.assertEqual(decide(a, command), "deny", command)
-        self.assertIsNone(decide(a, "GH_REPO=someone/else gh api -X PUT repos/{owner}/{repo}/pulls/5/merge -f x=repos/someone/else/y"))
         for command in ("gh api -X PUT repos/someone/else/pulls/3/merge-async", "gh pr merge 3 -R someone/else",
                         f"cd {other} && gh pr merge 4 --squash", "gh pr -R someone/else merge 3",
                         "gh pr merge https://github.com/someone/else/pull/3",
@@ -309,7 +322,7 @@ class Deny(RailTest):
         for name in ("git", "gh"):
             path = os.path.join(bin_dir, name)
             with open(path, "w") as f:
-                f.write(f'#!/bin/sh\necho "{name} $*" >> "{log}"\n')
+                f.write(f'#!/bin/sh\necho "{name} $*" >> "{log}"\necho "[$GH_REPO] $*" >> "{log}.repo"\n')
             os.chmod(path, 0o755)
         env = {"PATH": bin_dir + os.pathsep + "/usr/bin" + os.pathsep + "/bin", "HOME": work}
         ran_and_passed, ran = [], 0
@@ -317,13 +330,26 @@ class Deny(RailTest):
             if os.path.exists(log):
                 os.remove(log)
             subprocess.run([bash, "-c", line], cwd=work, env=env, capture_output=True, text=True, timeout=20)
-            said = open(log).read().splitlines() if os.path.exists(log) else []
+            said = []
+            if os.path.exists(log):
+                with open(log) as f:
+                    said = f.read().splitlines()
             if command in said:
                 ran += 1
                 if not self.judge(line):
                     ran_and_passed.append(line)
         self.assertEqual(ran_and_passed, [])
         self.assertGreater(ran, 200)  # the lines are real: bash runs the command in most of them
+        # GH_REPO as gh really gets it: where it is unset again on the way, the merge is this checkout's.
+        for line in ("GH_REPO=someone/else env --unset=GH_REPO gh pr merge 5", "GH_REPO=someone/else env -uGH_REPO gh pr merge 5",
+                     'GH_REPO=someone/else env -i PATH="$PATH" gh pr merge 5', "GH_REPO=someone/else GH_REPO= gh pr merge 5",
+                     "export GH_REPO=someone/else; unset GH_REPO; gh pr merge 5", "export GH_REPO=someone/else | cat; gh pr merge 5"):
+            if os.path.exists(log + ".repo"):
+                os.remove(log + ".repo")
+            subprocess.run([bash, "-c", line], cwd=work, env=env, capture_output=True, text=True, timeout=20)
+            with open(log + ".repo") as f:
+                self.assertEqual(f.read().strip(), "[] pr merge 5", line)  # gh ran with no GH_REPO
+            self.assertTrue(self.judge(line), line)
 
     def test_an_empty_argument_a_comment_and_a_redirection_hide_nothing(self):
         p = self.fixture()

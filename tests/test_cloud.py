@@ -186,6 +186,11 @@ class Machine(RailTest):
         for command in ("cd other && git push origin main", "git push origin main", "cd proj && git push origin 7-work",
                         "sudo apt-get install -y ripgrep"):
             self.assertIsNone(self.decide(p, command, work), command)
+        # Where the guard loses track of the folder, the command is judged on the branch the project's own checkout
+        # is on: here the base branch, where a bare push and a merge are denied.
+        for command in ("cd proj; git push", "cd proj\ngit push origin", "pushd proj; git push -u origin",
+                        "cd proj; git merge 9-x", "cd proj && git push", "cd proj && git merge 9-x"):
+            self.assertEqual(self.decide(p, command, work), "deny", command)
 
     def test_where_the_repositorys_own_hooks_ran_the_machines_step_aside(self):
         p = self.fixture()
