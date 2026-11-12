@@ -23,6 +23,23 @@ def decide(p, command, cwd=None, cloud=False, env_extra=None):
     return json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"]
 
 
+GUARD = []
+
+
+def load_guard():
+    """The guard module of the engine the launcher under test runs, loaded from its file: a test in the same
+    process may have imported a fixture project's copy of the package, whose folder is gone by now."""
+    if not GUARD:
+        import importlib.util
+        import railtest
+        engine = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(railtest.RAIL))), "engine")
+        spec = importlib.util.spec_from_file_location("rail_guard_under_test", os.path.join(engine, "rail", "guard.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        GUARD.append(module)
+    return GUARD[0]
+
+
 class Deny(RailTest):
     def test_force_pushes_and_pushes_to_the_base_branch_are_denied(self):
         p = self.fixture()
@@ -217,6 +234,17 @@ class Deny(RailTest):
                         "declare GH_REPO=someone/else; gh pr merge 5"):
             self.assertEqual(decide(a, command), "deny", command)
         self.assertIsNone(decide(a, "GH_REPO=someone/else gh pr merge 3"))
+        # It is another repository's only when every word that names one agrees and nothing points here.
+        for command in ("GH_REPO=someone/else GH_REPO= gh pr merge 5", "GH_REPO=someone/else GH_REPO=acme/app gh pr merge 5",
+                        "GH_REPO=someone/else gh pr merge --squash https://github.com/acme/app/pull/5",
+                        "gh pr merge 5 -R someone/else --squash https://github.com/acme/app/pull/5",
+                        "gh pr merge 5 -R $REPO", "gh pr merge 5 -R someone/else -R acme/app",
+                        "gh api -if repos/someone/else/k=v -X PUT repos/acme/app/pulls/5/merge",
+                        "gh api -iH repos/someone/else/k -X PUT repos/acme/app/pulls/5/merge",
+                        "gh api -iF x=repos/someone/else/k -X PUT repos/{owner}/{repo}/pulls/5/merge",
+                        "gh api -if repos/someone/else/k=v -X PUT repos/:owner/:repo/pulls/5/merge"):
+            self.assertEqual(decide(a, command), "deny", command)
+        self.assertIsNone(decide(a, "GH_REPO=someone/else gh api -X PUT repos/{owner}/{repo}/pulls/5/merge -f x=repos/someone/else/y"))
         for command in ("gh api -X PUT repos/someone/else/pulls/3/merge-async", "gh pr merge 3 -R someone/else",
                         f"cd {other} && gh pr merge 4 --squash", "gh pr -R someone/else merge 3",
                         "gh pr merge https://github.com/someone/else/pull/3",
@@ -241,7 +269,9 @@ class Deny(RailTest):
             "x=$(echo 1) && {C}", "echo \"a 'b\" && {C}", "echo 'a \"b' && {C}", "cd . && {C}", "cd \"$PWD\" && {C}",
             "true || cd /tmp && {C}", "export FOO=1; {C}", "unset FOO; {C}", "[ -n \"a\" ] && {C}", "[[ a < b ]] && {C}",
             "((1 < 2)) && {C}", "echo a >> f; {C}", "echo a 2>&1 | tee f; {C}", "echo a <<< 'b'\n{C}",
-            "printf '%s\\n' \"it's\" ; {C}", "git \\\n{A}", "echo 'x\ncat <<EOF\n' ; {C}\nEOF"]
+            "printf '%s\\n' \"it's\" ; {C}", "git \\\n{A}", "echo 'x\ncat <<EOF\n' ; {C}\nEOF",
+            "echo \"a\nb\" ; {C} ; echo \"c\nd\"", "{C} # now", "{C} 2>&1 | tail -3", "{C} > out.log 2>&1",
+            "echo '' && {C}", "true \"\" ; {C}", "cat <<<'EOF'\necho $({C})\nEOF"]
     DENIED = ["git push -f origin topic", "git push origin HEAD:main", "gh pr merge 5",
               "gh api -X PUT repos/{owner}/{repo}/pulls/5/merge"]
 
@@ -253,10 +283,8 @@ class Deny(RailTest):
                 yield command, shape.replace("{C}", command).replace("{A}", command[4:]).replace("{{", "{").replace("}}", "}")
 
     def judge(self, line):
-        import railtest  # the engine the launcher under test runs: bin/rail in the framework, .rail/bin/rail in a project
-        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(railtest.RAIL))), "engine"))
-        from rail import guard
-        return guard.deny(line, "main", "7-work", cwd="/proj", locate=lambda d: (True, "7-work"), repo="acme/app", cloud=True)
+        return load_guard().deny(line, "main", "7-work", cwd="/proj", locate=lambda d: (True, "7-work"), repo="acme/app",
+                                 cloud=True)
 
     def test_a_denied_command_is_found_wherever_the_shell_runs_it(self):
         missed = [line for command, line in self.lines() if not self.judge(line)]
@@ -296,6 +324,34 @@ class Deny(RailTest):
                     ran_and_passed.append(line)
         self.assertEqual(ran_and_passed, [])
         self.assertGreater(ran, 200)  # the lines are real: bash runs the command in most of them
+
+    def test_an_empty_argument_a_comment_and_a_redirection_hide_nothing(self):
+        p = self.fixture()
+        p.git("checkout", "--quiet", "-b", "7-work")
+        for command in ('git push -o "" --force origin 7-work', "git push '' --force origin 7-work",
+                        'git commit --allow-empty-message -m "" --no-verify', 'git commit -m "" -n',
+                        "git push origin HEAD:main # now", "git push origin HEAD:main 2>&1 | tail -3"):
+            self.assertEqual(decide(p, command), "deny", command)
+        p.git("checkout", "--quiet", "main")  # on the base branch a bare push is a push to it
+        for push in ("git push", "git push origin", "git push -u origin"):
+            for tail in ("", " # publish it", " 2>&1 | tail -3", " > out.log", " 2>/dev/null", " >> log 2>&1 # and note"):
+                self.assertEqual(decide(p, push + tail), "deny", push + tail)
+
+    def test_a_cd_on_one_line_holds_for_the_next_only_when_no_line_can_be_text(self):
+        p = self.fixture()
+        other = os.path.join(self.tmp, "other")
+        subprocess.run(["git", "init", "--quiet", "-b", "main", other], check=True)
+        # Every line is a command for certain: the cd holds.
+        self.assertIsNone(decide(p, f"cd {other} && git add -A\ngit commit -m 'x'\ngit push origin main"))
+        # A quote runs over the lines, or a here-document follows: the line with the cd may be text.
+        for command in (f'echo "\ncd {other} && echo hi\n"\ngit push origin main',
+                        f"cat <<EOF\ncd {other} && echo hi\nEOF\ngit push origin main",
+                        f"echo 'x\ncd {other} && true'\ngh pr merge 5"):
+            self.assertEqual(decide(p, command), "deny", command)
+        # Quotes that only seem to pair up on a line.
+        for command in ('echo "a\nb" ; git push -f origin 7-work ; echo "c\nd"',
+                        "cat <<<'EOF'\necho $(git push -f origin 7-work)\nEOF"):
+            self.assertEqual(decide(p, command, cloud=True), "deny", command)
 
     def test_every_line_of_a_command_is_read_as_a_command(self):
         # The guard doesn't parse the shell, so it can't tell text from commands for certain; a line it took for
