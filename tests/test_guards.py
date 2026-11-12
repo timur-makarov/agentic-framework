@@ -63,6 +63,12 @@ class Deny(RailTest):
                         f"cd {other} && git push --force-with-lease origin main", f"cd {other} && git merge topic",
                         f"cd {other} && gh pr merge 4 --squash"):
             self.assertIsNone(decide(p, command), command)
+        # A push to a local folder that is a repository says nothing about the pushes after it.
+        bare = os.path.join(self.tmp, "backup.git")
+        subprocess.run(["git", "init", "--quiet", "--bare", bare], check=True)
+        for command in (f"cd {other} && git push {bare} main && git push -f origin topic",
+                        f"cd {other} && git push {bare} main && git push origin main"):
+            self.assertIsNone(decide(p, command), command)
         # Back in the project, or somewhere the hook can't follow, the rules hold.
         for command in (f"cd {other} && cd {p.root} && git push origin main", "cd $ELSEWHERE && git push origin main",
                         "cd /no/such/dir; git push origin main", f"cd {other} && git -C {p.root} push origin main"):
