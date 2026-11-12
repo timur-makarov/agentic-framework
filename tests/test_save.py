@@ -99,6 +99,27 @@ class Save(RailTest):
         self.assertEqual(sorted(p for p in pushed if p), sorted(names + ["src/calc.py"]))
         self.assertEqual(events(a)[-1]["event"], "saved")
 
+    def test_a_save_with_nothing_to_save_leaves_a_shipped_tickets_head_alone(self):
+        # The check that counts ran on the commit the ship pushed. A [skip ci] commit on top would never get one,
+        # so the ticket would wait for CI for good and its red check would be forgotten.
+        a, b, github = self.github_pair(config=CONFIG + "\n[claim]\nsave_minutes = 0\n")  # any quiet time is long enough
+        a.add(ticket())
+        a.rail("next")
+        a.fix_calc("1")
+        a.rail("advance", "1")
+        github.ci("1-fix-add", "failure", summary="tests/test_calc.py::test_negative FAILED")
+        head = github.head("1-fix-add")
+        self.assertEqual(a.rail("next")["reason"]["code"], "RED_CHECK")
+        self.assertEqual(hook(a, "stop").returncode, 0)
+        self.assertEqual(a.rail("save")["action"]["brief"], "Nothing to save.")
+        self.assertEqual(github.head("1-fix-add"), head)
+        for fx in (a, b):
+            self.assertEqual(fx.rail("next", session="session-a")["reason"]["code"], "RED_CHECK")
+        # Once the agent changes a file, the work is in flight again and is saved.
+        a.write("src/calc.py", HALF_DONE, base=a.worktree("1"))
+        self.assertEqual(a.rail("save")["steps"][0]["detail"], "ticket 1: 1 files")
+        self.assertNotEqual(github.head("1-fix-add"), head)
+
     def test_a_save_leaves_out_files_whose_names_say_they_hold_secrets(self):
         # A save is pushed before verify, where the project's secret scan runs.
         a, b = self.remote_pair()
