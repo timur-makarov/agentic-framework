@@ -290,7 +290,11 @@ class Deny(RailTest):
             "until true; do cd /tmp && true; done; {C}", "false && {{ cd /tmp && true; }}; {C}",
             "false && cd /tmp && true; {C}", "if true; then :; else cd /tmp && true; fi; {C}",
             "if false; then\ncd /tmp && true\nfi\n{C}", "for d in; do cd /tmp && true; done; {C}",
-            "false && cd /tmp && true\n{C}", "true || cd /tmp && {C}", "FOO=1 cd /tmp 2>/dev/null; {C}"]
+            "false && cd /tmp && true\n{C}", "true || cd /tmp && {C}", "FOO=1 cd /tmp 2>/dev/null; {C}",
+            # PWD and HOME set by the command itself: the cd goes where the command says, back to the work folder.
+            "W=$PWD; cd /tmp && PWD=$W && cd $PWD && {C}", "W=$PWD; cd /tmp && export PWD=$W && cd \"$PWD\" && {C}",
+            "H=$PWD; cd /tmp && HOME=$H && cd ~ && {C}", "H=$PWD; cd /tmp && export HOME=$H && cd $HOME && {C}",
+            "H=$PWD; cd /tmp; HOME=$H; cd && {C}"]
     DENIED = ["git push -f origin topic", "git push origin HEAD:main", "gh pr merge 5",
               "gh api -X PUT repos/{owner}/{repo}/pulls/5/merge"]
 
@@ -380,6 +384,13 @@ class Deny(RailTest):
         # Every line is a command for certain: the cd holds.
         self.assertIsNone(decide(p, f"cd {other} && git add -A\ngit commit -m 'x'\ngit push origin main"))
         self.assertIsNone(decide(p, f"cd {p.root} && git status && cd {other} && git push origin main"))
+        # A command that sets PWD or HOME itself decides where `cd $PWD` and `cd ~` go.
+        for denied in ("gh pr merge 5", "git push origin HEAD:main", "git push -f origin 7-work"):
+            for command in (f"cd {other} && PWD={p.root} && cd $PWD && {denied}",
+                            f"cd {other} && export PWD={p.root} && cd \"$PWD\" && {denied}",
+                            f"HOME={p.root}; cd {other} && cd ~ && {denied}"):
+                self.assertEqual(decide(p, command), "deny", command)
+        self.assertEqual(decide(p, f"HOME={p.root}; rm -rf ~/build"), "ask")
         # A cd is believed as a plain command in a flat chain only. Behind a keyword or in braces the shell may skip
         # it, and one from the middle of a chain holds until that chain ends.
         for command in (f"if false; then cd {other} && true; fi; git push origin main",
