@@ -80,6 +80,25 @@ class Save(RailTest):
         self.assertEqual(a.git("ls-tree", "-r", "--name-only", "origin/1-fix-add", "src/").split(), ["src/calc.py"])
         self.assertEqual(events(a)[-1]["event"], "saved")
 
+    def test_a_save_takes_any_file_name_and_a_file_that_came_and_went(self):
+        a, b = self.remote_pair()
+        a.add(ticket())
+        a.rail("next")
+        tree = a.worktree("1")
+        a.write("src/new.py", "NEW = 1\n", base=tree)  # staged, then deleted: nothing is left to record
+        a.git("add", "src/new.py", cwd=tree)
+        os.remove(os.path.join(tree, "src", "new.py"))
+        self.assertEqual(a.rail("save")["steps"][0]["result"], "pass")
+        names = ['src/q"x.py', "src/a -> b.py", "src/a b.py", "src/st*r[1].py"]
+        for name in names:
+            a.write(name, "X = 1\n", base=tree)
+        self.assertEqual(a.rail("save")["steps"][0]["detail"], "ticket 1: 4 files")
+        self.assertEqual(a.git("status", "--porcelain", cwd=tree), "")
+        a.git("fetch", "--quiet")
+        pushed = a.git("ls-tree", "-r", "--name-only", "-z", "origin/1-fix-add", "src/").split("\0")
+        self.assertEqual(sorted(p for p in pushed if p), sorted(names + ["src/calc.py"]))
+        self.assertEqual(events(a)[-1]["event"], "saved")
+
     def test_a_save_leaves_out_files_whose_names_say_they_hold_secrets(self):
         # A save is pushed before verify, where the project's secret scan runs.
         a, b = self.remote_pair()

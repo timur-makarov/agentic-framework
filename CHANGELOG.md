@@ -99,3 +99,4 @@ One line for each change, saying why.
 - Read GH_REPO= only as an assignment in front of a gh command, and believe an exported GH_REPO or GIT_DIR only when it points at this project: in an option's value, or exported and then unset, it made a merge of this project's pull request pass as another repository's.
 - Stop following a cd the shell may skip or run in a child: `true || cd OTHER && git push origin main` runs the push here.
 - Stop a # inside a word from hiding the rest of the line from the guard: `curl https://x/y#frag && git push origin HEAD:main` passed.
+- Read changed file names from git exactly (status -z) and commit only what a save really records: a name with a double quote or an arrow in it made every save fail, and a file staged and then deleted made one fail.
