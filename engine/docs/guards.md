@@ -43,9 +43,14 @@ command in another repository is left alone. Whatever the guard can't follow (`c
 `cd` before `;` or `||`, `--git-dir`, a variable) is judged as this project's. A `gh` merge is judged by the
 repository it names.
 
-**Hooks and permission rules load only in a session with this one repository.** In a cloud session with
-several repositories, or a project thread, none of this is active: the ruleset on GitHub is the guard there,
-and `rail doctor` says so (`rail docs cloud`).
+**A repository's hooks and permission rules load only in a session that starts with that one
+repository.** For a cloud session with several repositories, or a project thread, `rail provision` writes
+the same hooks into the machine's own settings: the guard then finds the project each command runs in, and
+steps aside where the repository's own hooks loaded. The permission rules don't travel that way, and the
+ruleset on GitHub is the guard nothing gets around (`rail docs cloud`).
+
+**Two more hooks save the work in flight** (`rail docs loop`): Stop, at the end of each turn, and
+PostToolUse, at most every ten minutes. They never block and never ask.
 
 No git hooks are installed: they would collide with a project's own hook manager, and CI repeats the
 checks. The sandbox is turned on with `"sandbox": {"enabled": true}`; where its tools (bubblewrap and socat

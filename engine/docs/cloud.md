@@ -29,10 +29,11 @@ of the two it is on.
      message.
    - Settings > General > Pull Requests: turn on "Automatically delete head branches". A cloud session
      can't delete branches, so merged tickets would pile up.
-4. **Approve the environment's setup script.** `rail doctor` prints a few lines; the agent proposes them for
-   the session's cloud environment and you approve once. They link `rail` onto `PATH` and run
-   `rail provision` when the environment's machine is built, and the result is kept as a snapshot, so later
-   sessions start with everything installed.
+4. **Approve the environment's setup script.** `rail doctor` prints three lines; the agent proposes them for
+   the session's cloud environment and you approve once. They run `rail provision` when the environment's
+   machine is built: it links `rail` onto `PATH`, writes Rail's hooks into the machine's own Claude Code
+   settings, and runs the project's `provision` command. The result is kept as a snapshot, so later sessions
+   start with everything in place. A machine without it provisions itself on the first `rail next`.
 
 `rail doctor` checks all of it and says what is left.
 
@@ -50,11 +51,14 @@ Each cloud session is a new session on a new clone, and `rail next` is all it ne
 - It moves every shipped ticket, whoever shipped it: it waits for CI, rebases a pull request that fell
   behind, and merges a green one. A claim protects only work in flight.
 - It resumes work an ended session left. A ticket another session is implementing or reviewing is left
-  alone while it keeps moving; after `[claim] stale_minutes` (60) with no journal event, the next session
+  alone while it keeps moving; after `[claim] stale_minutes` (30) with no journal event, the next session
   resumes it from the pushed branch. `rail next --ticket NN` takes one over at once.
 - Then it takes new work, in ID order.
 
-Work that isn't pushed is lost when a machine goes away, so `rail advance` commits and pushes every time.
+Work that isn't pushed is lost when a machine goes away. So the work in flight is saved as it goes: hooks
+run `rail save` at the end of each turn and at most every ten minutes of work, and `rail advance` commits
+and pushes every time. A reclaimed machine, a usage limit or a crash costs minutes, and the next session
+starts from the last save.
 
 ## Run with no session open
 
@@ -78,7 +82,8 @@ lists the tickets whose owner is `agent`.
 - **Your inbox** is one saved search: `is:open label:rail:needs-you`. Every wait gets the label as soon as
   any session sees it.
 - **Approve or continue:** add the label `rail:go` to the pull request. A comment you leave there reaches
-  the agent as your note. Don't merge a contract pull request: it holds only the contract.
+  the agent as your note. Don't merge a contract pull request: it holds only the contract. If you do, Rail
+  takes it as your approval and opens a new pull request for the work.
 - **Change a contract:** comment on its pull request. **Reject it:** close the pull request.
 - **Merge a HIGH ticket:** the merge button.
 - Each pull request ends with `Claude-Session:` and a link to the session that worked the ticket.
@@ -86,11 +91,17 @@ lists the tickets whose owner is `agent`.
 ## Session shapes
 
 Claude Code loads a repository's hooks and permission rules only in a session that starts with that one
-repository. A session with several repositories, and a thread in a project, load neither. There:
+repository. A session with several repositories, and a thread in a project, load neither. So
+`rail provision` also writes the hooks into the machine's own settings, which every session loads:
 
-- `rail` still works, because the environment's setup script linked it onto `PATH`;
-- Rail's guard hook and its allow rules are not active, and `rail doctor` says so;
-- the ruleset on GitHub is the guard, and `rail ci` repeats every ship check on the pull request.
+- the guard finds the project a command runs in (`cd repo && git push origin main` is still denied), and
+  the saves and the session's snapshot cover every Rail repository below the session's folder;
+- where the repository's own hooks did load, the machine's step aside, so nothing runs twice;
+- `rail` works everywhere, because provision linked it onto `PATH`;
+- the allow rules are a repository's and don't load there, so auto mode reviews `rail` commands itself;
+- the ruleset on GitHub stays the guard nothing can get around, and `rail ci` repeats every ship check.
+
+`rail doctor` says which hooks ran in the session.
 
 ## What the cloud refuses
 

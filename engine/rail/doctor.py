@@ -10,13 +10,10 @@ from . import gitx
 from .util import cloud
 
 # The cloud environment's setup script: it runs as root before each new machine's first session, from the folder
-# that holds the repositories, and its result is kept as the environment's snapshot. The link gives every session
-# `rail`, also where no repository hook runs (a session with several repositories, a project thread).
+# that holds the repositories, and its result is kept as the environment's snapshot. `rail provision` links rail
+# onto PATH, writes the machine's hooks, and runs the project's own provision command.
 ENVIRONMENT_SCRIPT = """for d in */; do
-  if [ -x "$d.rail/bin/rail" ]; then
-    ln -sf "$PWD/$d.rail/bin/rail" /usr/local/bin/rail
-    (cd "$d" && RAIL_CLOUD=1 .rail/bin/rail provision) || true
-  fi
+  [ -x "$d.rail/bin/rail" ] && (cd "$d" && RAIL_CLOUD=1 .rail/bin/rail provision) || true
 done"""
 
 
@@ -105,26 +102,35 @@ def checks(project):
 
 def cloud_checks(project):
     """What a Claude Code cloud session needs beyond the repository."""
-    from .cli import provisioned
+    from .cli import bin_dir, provisioned
 
     found = [("cloud", True, "a Claude Code cloud session: Rail installs what the checks need here")]
-    if project.config["commands"]["provision"]:
-        done = provisioned(project)
-        found.append(("provision", done, "this machine has what [commands] provision installs" if done
-                      else "this machine isn't provisioned: run rail provision"))
+    done = provisioned(project)
+    found.append(("provision", done, "this machine is provisioned: rail is linked, the machine's hooks are written,"
+                                     " and [commands] provision ran" if done
+                  else "this machine isn't provisioned: run rail provision"))
+    try:
+        with open(os.path.join(os.path.expanduser("~"), ".claude", "settings.json")) as f:
+            machine = "hook guard --machine" in f.read()
+    except OSError:
+        machine = False
     launcher = os.path.realpath(os.path.join(project.root, ".rail", "bin", "rail"))
-    linked = os.path.realpath("/usr/local/bin/rail") == launcher
-    found.append(("environment", linked, "the environment's setup script put rail on PATH" if linked else
+    linked = os.path.exists(os.path.join(bin_dir(), "rail"))
+    ready = linked and machine
+    found.append(("environment", ready, "rail is on PATH and the machine's hooks are in place" if ready else
                   "add these lines to the cloud environment's setup script (your agent can propose them with its"
-                  " environment tool; you approve once). They give every session rail and the provisioned tools,"
-                  " also where no repository hook runs:\n" + ENVIRONMENT_SCRIPT))
+                  " environment tool; you approve once). They provision each new machine before its first session,"
+                  " so every session starts with rail, its hooks and the tools:\n" + ENVIRONMENT_SCRIPT))
     session = os.environ.get("CLAUDE_CODE_SESSION_ID")
     if session:
         loaded = bool(project.cache_read("hooks", session))
-        found.append(("session hooks", True if loaded else None,
-                      "Rail's hooks run in this session" if loaded else
+        found.append(("session hooks", True if loaded or machine else None,
+                      "the repository's hooks run in this session" if loaded else
+                      "the repository's hooks didn't load in this session (it holds several repositories, or is a"
+                      " project thread); the machine's hooks do their work" if machine else
                       "Rail's hooks didn't run in this session (it holds several repositories, or is a project"
-                      " thread), so the guard and the allow rules aren't active here: GitHub's ruleset is the guard"))
+                      " thread), so the guard and the saves aren't active here: run rail provision, and until then"
+                      " GitHub's ruleset is the guard"))
     return found
 
 

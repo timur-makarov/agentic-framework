@@ -27,7 +27,8 @@ each page.
 
 - A ticket outside `auto_tiers` opens a contract pull request at `add`, titled `NN: [contract] ...`. Approve
   it with the label `rail:go`, change it by commenting, reject it by closing it. Don't merge it: it holds
-  only the contract, and with the ruleset GitHub refuses, because its `rail` check is red.
+  only the contract, and with the ruleset GitHub refuses, because its `rail` check is red. Without the
+  ruleset a merge goes through, and Rail takes it as the approval: the work gets a new pull request.
 - A ticket in `auto_tiers` opens its pull request at claim.
 - No pull request is a draft. The `rail` check stays red with `not shipped yet` until the ticket ships, so
   nothing merges early by mistake.

@@ -76,6 +76,12 @@ class Operations(RailTest):
         self.assertIn("People keep four acts", p.rail("docs", "environments")["text"])
         self.assertIn("/loop", p.rail("docs", "away")["text"])
         self.assertIn("takes in issues labelled `rail`", p.rail("docs", "away")["text"])
+        journal = p.rail("docs", "journal")["text"]
+        for name in ("accepted", "amended", "claimed", "saved", "step", "shipped", "tier_raised", "finding",
+                     "consulted", "continued", "dropped"):
+            self.assertIn(f"| `{name}` |", journal)  # every event the engine writes has its row
+        for text in ("NN-review.json", "review/v1", "A review is complete for a patch", "rail/ids"):
+            self.assertIn(text, journal)
         cloud = p.rail("docs", "cloud")["text"]
         for text in ("Import a ruleset", ".rail/ruleset.json", "Automatically delete head branches", "rail provision",
                      "rail:needs-you", "stale_minutes", "rail/ids", "several repositories"):

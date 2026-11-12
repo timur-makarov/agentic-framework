@@ -115,6 +115,13 @@ class Fixture:
         env.pop("GITHUB_ACTIONS", None)
         env.pop("CLAUDE_CODE_REMOTE_SESSION_ID", None)
         env["RAIL_CLOUD"] = "1" if cloud else "0"  # the suite itself may run inside a cloud session
+        # What provision writes on a cloud machine goes to a scratch home and bin folder, never the real ones.
+        scratch = os.path.join(os.path.dirname(self.root), "machine")
+        env["RAIL_BIN_DIR"] = os.path.join(scratch, "bin")
+        if cloud:
+            env["HOME"] = os.path.join(scratch, "home")
+            os.makedirs(env["RAIL_BIN_DIR"], exist_ok=True)
+            os.makedirs(env["HOME"], exist_ok=True)
         env.update(env_extra or {})
         env["CLAUDE_CODE_SESSION_ID"] = session
         env["RAIL_FAKE_REVIEWS"] = self.reviews

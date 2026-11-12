@@ -1142,44 +1142,112 @@ def cmd_save(project, args):
 # --- provisioning: the machine carries the tools --------------------------------------
 
 
+MACHINE_SETUP = "machine-1"  # raise it when what provision writes onto a cloud machine changes
+
+
+def bin_dir():
+    """Where provision links rail on a cloud machine. RAIL_BIN_DIR moves it, for tests."""
+    return os.environ.get("RAIL_BIN_DIR") or "/usr/local/bin"
+
+
 def _provision_marker(project):
-    """One file per project on this machine: the hash of the provision command that last ran here. It lives in the
-    home folder, so an environment's snapshot keeps it and a fresh VM starts without it."""
+    """One file per project on this machine: what provision last did here. It lives in the home folder, so an
+    environment's snapshot keeps it and a fresh VM starts without it."""
     import hashlib
     name = hashlib.sha256(project.root.encode()).hexdigest()[:16]
     return os.path.join(os.path.expanduser("~"), ".cache", "rail", "provisioned", name)
 
 
-def provisioned(project):
+def _provision_wanted(project):
+    """The hash of what provision does on this kind of machine: the project's command, and in a cloud session
+    Rail's own part (the link and the machine's hooks)."""
     import hashlib
     command = project.config["commands"]["provision"]
-    if not command:
+    if not command and not cloud():
+        return None  # nothing to do here
+    return hashlib.sha256(f"{command}\n{MACHINE_SETUP if cloud() else ''}".encode()).hexdigest()
+
+
+def provisioned(project):
+    wanted = _provision_wanted(project)
+    if wanted is None:
         return True
     path = _provision_marker(project)
     if not os.path.exists(path):
         return False
     with open(path) as f:
-        return f.read().strip() == hashlib.sha256(command.encode()).hexdigest()
+        return f.read().strip() == wanted
+
+
+def install_machine(project, run):
+    """On a cloud machine: link rail onto PATH, and write Rail's hooks into the machine's own Claude Code settings.
+    Claude Code loads a repository's hooks only in a session that starts with that one repository; the machine's
+    settings load in every session, so the guard and the saves also work above several repositories and in a
+    project's threads. Where the repository's hooks do run, these step aside."""
+    launcher = os.path.join(project.root, ".rail", "bin", "rail")
+    link = os.path.join(bin_dir(), "rail")
+    try:
+        if os.path.realpath(link) != os.path.realpath(launcher):
+            if os.path.lexists(link):
+                os.remove(link)
+            os.symlink(launcher, link)
+        linked = True
+    except OSError:
+        linked = False
+    command = link if linked else launcher
+    pulse = ('[ -n "$(find "$HOME/.cache/rail/pulse/${CLAUDE_CODE_SESSION_ID:-any}" -mmin -10 2>/dev/null)" ]'
+             f" || {command} hook pulse --machine")
+    wanted = [("SessionStart", None, f"{command} hook session-start --machine"),
+              ("PreToolUse", "Bash", f"{command} hook guard --machine"),
+              ("PostToolUse", None, pulse),
+              ("Stop", None, f"{command} hook stop --machine")]
+    path = os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
+    try:
+        with open(path) as f:
+            settings = json.load(f)
+    except OSError:
+        settings = {}
+    except ValueError:
+        return run.record("machine", False, None, "the machine's ~/.claude/settings.json isn't valid JSON",
+                          output=f"{path} isn't valid JSON, so Rail's hooks weren't written into it.")
+    added = []
+    for name, matcher, hook_command in wanted:
+        mark = hook_command[hook_command.index("hook "):]  # such as "hook guard --machine"
+        entries = settings.setdefault("hooks", {}).setdefault(name, [])
+        if any(mark in json.dumps(entry) for entry in entries):
+            continue
+        entries.append({**({"matcher": matcher} if matcher else {}), "hooks": [{"type": "command", "command": hook_command}]})
+        added.append(name)
+    if added:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(settings, f, indent=2)
+            f.write("\n")
+    detail = ("rail linked into " + bin_dir() if linked else "rail not linked (no write access to " + bin_dir() + ")")
+    return run.record("machine", True, None, detail + ("; hooks written to ~/.claude/settings.json" if added
+                                                       else "; the machine's hooks are there already"))
 
 
 def run_provision(project, run):
-    """Run [commands] provision as root, and note that it ran. Returns whether it passed."""
-    import hashlib
+    """What a machine made for the work gets: on a cloud machine Rail's own part, then [commands] provision as
+    root. Notes that it ran. Returns whether it passed."""
     import shlex
 
+    passed = install_machine(project, run) if cloud() else True
     command = project.config["commands"]["provision"]
-    as_root = command
-    if os.geteuid() != 0 and subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode == 0:
-        as_root = f"sudo -n -E sh -c {shlex.quote(command)}"  # a CI runner isn't root, and its sudo asks no password
-    code, output, ms = steps.run_shell(as_root, project.root, {"RAIL_BASE": project.base_ref},
-                                       project.config["commands"]["timeout_secs"])
-    passed = run.record("provision", code == 0, None, "timeout" if code is None else f"exit {code}", ms,
-                        output=f"$ {command}\n{steps.tail(output)}")
+    if passed and command:
+        as_root = command
+        if os.geteuid() != 0 and subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode == 0:
+            as_root = f"sudo -n -E sh -c {shlex.quote(command)}"  # a CI runner isn't root, and its sudo asks no password
+        code, output, ms = steps.run_shell(as_root, project.root, {"RAIL_BASE": project.base_ref},
+                                           project.config["commands"]["timeout_secs"])
+        passed = run.record("provision", code == 0, None, "timeout" if code is None else f"exit {code}", ms,
+                            output=f"$ {command}\n{steps.tail(output)}")
     if passed:
         path = _provision_marker(project)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
-            f.write(hashlib.sha256(command.encode()).hexdigest() + "\n")
+            f.write(_provision_wanted(project) + "\n")
     return passed
 
 
@@ -1192,24 +1260,27 @@ def provision_task(project):
 
 
 def cmd_provision(project, args):
-    """Install what setup and verify need that the machine lacks: [commands] provision, once per machine. It runs
-    on machines made for the work, a cloud session's VM and a CI runner. A person's own machine is theirs."""
+    """Get a machine made for the work ready: on a cloud machine, link rail and write the machine's hooks; then
+    [commands] provision, which installs what setup and verify need, once per machine. It runs in a cloud session
+    and on a CI runner. A person's own machine is theirs."""
     command = project.config["commands"]["provision"]
-    if not command:
+    if not disposable():
+        brief = ("This is your own machine, so Rail installs nothing here." + (
+            f" In a cloud session and in CI it runs:\n  {command}\nInstall the same tools your own way."
+            if command else " No provision command is set ([commands] provision in .rail/config.toml)."))
+        return answer(owner="human" if command else "none", code="PROVISION_LOCAL",
+                      action={"kind": "human_wait" if command else "rest", "brief": brief})
+    if _provision_wanted(project) is None:
         return answer(code="NO_WORK", action={"kind": "rest", "brief": "No provision command is set ([commands]"
                                                                        " provision in .rail/config.toml)."})
-    if not disposable():
-        brief = ("This is your own machine, so Rail installs nothing here. In a cloud session and in CI it runs:\n"
-                 f"  {command}\nInstall the same tools your own way; rail doctor says what verify still misses.")
-        return answer(owner="human", code="PROVISION_LOCAL", action={"kind": "human_wait", "brief": brief})
     if provisioned(project) and not args.force:
         return answer(code="PROVISIONED", action={"kind": "rest", "brief": "This machine is provisioned already;"
                                                                            " rail provision --force runs it again."})
     run = steps.Run(project, type("T", (), {"id": ""})())
     passed = run_provision(project, run)
     brief = ("Provisioned. Next: rail next" if passed else
-             f"The provision command failed:\n{run.failure[1]}\n\nFix [commands] provision in .rail/config.toml (a"
-             " HIGH ticket), or the machine, then run: rail provision")
+             f"Provisioning failed at '{run.failure[0]}':\n{run.failure[1]}\n\nFix [commands] provision in"
+             " .rail/config.toml (a HIGH ticket), or the machine, then run: rail provision")
     return answer(owner="agent", code="PROVISIONED" if passed else "PROVISION_FAILED", steps_=run.steps, cwd=".",
                   action={"kind": "script" if passed else "agent_task", "brief": brief,
                           **({"command": "rail next"} if passed else {})})
@@ -1387,6 +1458,7 @@ def parser():
     verb("ci", "the rail check: the ship checks again on a pull request's head", ticket=False)
     hook = sub.add_parser("hook")  # internal: Claude Code hooks call it; not a verb
     hook.add_argument("name", choices=sorted(hooks.HOOKS))
+    hook.add_argument("--machine", action="store_true")  # from the machine's settings, not the repository's
     return p
 
 
@@ -1415,7 +1487,7 @@ def main(argv=None):
         if getattr(args, "ticket_opt", None):
             args.ticket = args.ticket_opt
         if args.verb == "hook":
-            return hooks.run(args.name)
+            return hooks.run(args.name, args.machine)
         if args.verb == "init":
             result = cmd_init(args)
         elif args.verb == "docs":
