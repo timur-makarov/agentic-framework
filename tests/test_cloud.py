@@ -141,6 +141,38 @@ class Machine(RailTest):
             self.assertEqual(json.load(f), settings)  # written once
         self.assertEqual(p.rail("next", cloud=True)["reason"]["code"], "NO_WORK")
 
+    def test_a_tickets_newer_engine_leaves_the_machine_to_the_projects_own(self):
+        """The link and the hooks call the engine in the project's checkout. An older one there doesn't know them,
+        and a hook that fails on every tool call would stop the session."""
+        log = os.path.join(self.tmp, "provisioned.log")
+        p = self.fixture(config=CONFIG.replace("[commands]", f'[commands]\nprovision = "echo ran >> {log}"'))
+        home, bin_dir = self.machine(p)
+        theirs = p.path(".rail", "engine", "rail", "cli.py")
+        p.write(theirs, read(theirs).replace('MACHINE_SETUP = "', 'MACHINE_SETUP = "older-'))
+        self.assertEqual(p.rail("next", cloud=True)["reason"]["code"], "PROVISION")  # the project's command still runs
+        done = p.rail("provision", cloud=True)
+        self.assertEqual([(s["step"], s["result"]) for s in done["steps"]], [("provision", "pass")])
+        self.assertEqual(read(log), "ran\n")
+        self.assertFalse(os.path.lexists(os.path.join(bin_dir, "rail")))
+        self.assertFalse(os.path.exists(os.path.join(home, ".claude", "settings.json")))
+        self.assertEqual(p.rail("next", cloud=True)["reason"]["code"], "NO_WORK")
+
+        # Once the project's own engine is this one, provision is asked for again and sets the machine up.
+        p.write(theirs, read(theirs).replace('MACHINE_SETUP = "older-', 'MACHINE_SETUP = "'))
+        self.assertEqual(p.rail("next", cloud=True)["reason"]["code"], "PROVISION")
+        p.rail("provision", cloud=True)
+        self.assertTrue(os.path.exists(os.path.join(home, ".claude", "settings.json")))
+        self.assertEqual(read(log), "ran\nran\n")
+
+        # With no command of the project's, a different engine there leaves nothing for provision to do.
+        q = self.fixture(name="other")
+        theirs = q.path(".rail", "engine", "rail", "cli.py")
+        q.write(theirs, read(theirs).replace('MACHINE_SETUP = "', 'MACHINE_SETUP = "older-'))
+        self.assertEqual(q.rail("next", cloud=True)["reason"]["code"], "NO_WORK")
+        told = q.rail("provision", cloud=True)
+        self.assertEqual(told["reason"]["code"], "NO_WORK")
+        self.assertIn("isn't this one", told["action"]["brief"])
+
     def test_above_several_repositories_the_guard_finds_the_project_a_command_runs_in(self):
         work = os.path.join(self.tmp, "work")
         os.makedirs(work)

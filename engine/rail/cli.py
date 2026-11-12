@@ -1176,9 +1176,25 @@ def _provision_wanted(project):
     Rail's own part (the link and the machine's hooks)."""
     import hashlib
     command = project.config["commands"]["provision"]
-    if not command and not cloud():
+    machine = MACHINE_SETUP if _sets_up_machine(project) else ""
+    if not command and not machine:
         return None  # nothing to do here
-    return hashlib.sha256(f"{command}\n{MACHINE_SETUP if cloud() else ''}".encode()).hexdigest()
+    return hashlib.sha256(f"{command}\n{machine}".encode()).hexdigest()
+
+
+def _sets_up_machine(project):
+    """Whether provision does Rail's own part here: only on a cloud machine, and only when the engine in the
+    project's own checkout sets up the same thing as this one. The link and the hooks call the project's engine,
+    and a ticket that changes the engine runs its own copy: hooks an older engine doesn't know would fail on every
+    tool call."""
+    if not cloud():
+        return False
+    try:
+        with open(os.path.join(project.root, ".rail", "engine", "rail", "cli.py")) as f:
+            theirs = re.search(r'^MACHINE_SETUP = "([^"]*)"', f.read(), re.M)
+    except OSError:
+        return False
+    return bool(theirs) and theirs.group(1) == MACHINE_SETUP
 
 
 def provisioned(project):
@@ -1246,7 +1262,7 @@ def run_provision(project, run):
     root. Notes that it ran. Returns whether it passed."""
     import shlex
 
-    passed = install_machine(project, run) if cloud() else True
+    passed = install_machine(project, run) if _sets_up_machine(project) else True
     command = project.config["commands"]["provision"]
     if passed and command:
         as_root = command
@@ -1284,8 +1300,11 @@ def cmd_provision(project, args):
         return answer(owner="human" if command else "none", code="PROVISION_LOCAL",
                       action={"kind": "human_wait" if command else "rest", "brief": brief})
     if _provision_wanted(project) is None:
+        other = ("" if not cloud() or _sets_up_machine(project) else
+                 " The link and the machine's hooks call the engine in the project's own checkout, and that one isn't"
+                 " this one, so this copy leaves them alone: run provision from the project's own once it has this engine.")
         return answer(code="NO_WORK", action={"kind": "rest", "brief": "No provision command is set ([commands]"
-                                                                       " provision in .rail/config.toml)."})
+                                                                       " provision in .rail/config.toml)." + other})
     if provisioned(project) and not args.force:
         return answer(code="PROVISIONED", action={"kind": "rest", "brief": "This machine is provisioned already;"
                                                                            " rail provision --force runs it again."})
