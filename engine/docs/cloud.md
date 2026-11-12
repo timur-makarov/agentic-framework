@@ -19,11 +19,14 @@ of the two it is on.
 2. **Merge that pull request.**
 3. **Make three settings on GitHub.** A cloud session can't change a repository's settings, so these are
    yours, and that is also why they are the guard an agent can't get around:
-   - Settings > Rules > Rulesets > New ruleset > Import a ruleset: choose `.rail/ruleset.json` from the
-     repository. It requires the `rail` check and a pull request on the base branch, keeps branches up to
-     date before a merge, allows squash merges only, and blocks force pushes and deletion.
-   - Settings > General > Pull Requests: allow squash merging only, with "Pull request title and
-     description" as the default message.
+   - Settings > Rules > Rulesets > New ruleset > Import a ruleset: choose `.rail/ruleset.json`. GitHub
+     asks for a file from your device, so download it first, from the repository or from the framework
+     (`seed/ruleset.json`); it is the same file for every repository. It requires the `rail` check and a pull
+     request on the default branch, keeps branches up to date before a merge, allows squash merges only, and
+     blocks force pushes and deletion. It also stops a contract pull request being merged by mistake: its
+     `rail` check stays red until the work ships.
+   - Settings > General > Pull Requests: "Pull request title and description" as the default squash
+     message.
    - Settings > General > Pull Requests: turn on "Automatically delete head branches". A cloud session
      can't delete branches, so merged tickets would pile up.
 4. **Approve the environment's setup script.** `rail doctor` prints a few lines; the agent proposes them for
@@ -75,7 +78,7 @@ lists the tickets whose owner is `agent`.
 - **Your inbox** is one saved search: `is:open label:rail:needs-you`. Every wait gets the label as soon as
   any session sees it.
 - **Approve or continue:** add the label `rail:go` to the pull request. A comment you leave there reaches
-  the agent as your note.
+  the agent as your note. Don't merge a contract pull request: it holds only the contract.
 - **Change a contract:** comment on its pull request. **Reject it:** close the pull request.
 - **Merge a HIGH ticket:** the merge button.
 - Each pull request ends with `Claude-Session:` and a link to the session that worked the ticket.

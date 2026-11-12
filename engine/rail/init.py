@@ -164,7 +164,8 @@ def init(cwd):
         "config.toml": ".rail/config.toml",
         "tickets/TEMPLATE.md": ".rail/tickets/TEMPLATE.md",
         "rail.yml": ".github/workflows/rail.yml",
-        "ruleset.json": ".rail/ruleset.json",  # for the person to import in GitHub: a session can't set it
+        "ruleset.json": ".rail/ruleset.json",  # for the person to import in GitHub: a session can't set it. It
+                                               # names the default branch, so one file fits every repository
     }
     packs = os.path.join(FRAMEWORK, "packs")
     for name in sorted(os.listdir(packs)) if os.path.isdir(packs) else []:
@@ -183,8 +184,6 @@ def init(cwd):
             text = f.read()
         if src == "config.toml":
             text = text.replace('base_branch = "main"', f'base_branch = "{_base_branch(root)}"', 1)
-        if src == "ruleset.json":
-            text = text.replace('"refs/heads/main"', f'"refs/heads/{_base_branch(root)}"', 1)
         _write(target, text)
         step(dest, True, "added")
 

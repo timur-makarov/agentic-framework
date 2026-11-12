@@ -42,7 +42,7 @@ class Init(RailTest):
                      "environment's setup script"):
             self.assertIn(text, cloud)
         ruleset = json.loads(read(p.path(".rail/ruleset.json")))
-        self.assertEqual(ruleset["conditions"]["ref_name"]["include"], ["refs/heads/main"])
+        self.assertEqual(ruleset["conditions"]["ref_name"]["include"], ["~DEFAULT_BRANCH"])
         self.assertEqual([r["type"] for r in ruleset["rules"]],
                          ["deletion", "non_fast_forward", "pull_request", "required_status_checks"])
         p.git("add", "-A")
@@ -88,7 +88,6 @@ class Init(RailTest):
         p.git("branch", "-m", "master")
         p.rail("init")
         self.assertIn('base_branch = "master"', read(p.path(".rail/config.toml")))
-        self.assertIn('"refs/heads/master"', read(p.path(".rail/ruleset.json")))
 
     def test_init_on_a_setup_branch_takes_the_remotes_default_branch_as_the_base(self):
         # A cloud session's clone has no origin/HEAD, and init there runs on a branch made for the setup.

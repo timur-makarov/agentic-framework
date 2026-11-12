@@ -14,8 +14,10 @@ Claude clones the framework, runs `rail init`, writes the project's checks, map 
 the checks need, and opens one pull request. Then three things are yours:
 
 1. Merge the pull request.
-2. Make three settings on GitHub, which a cloud session can't change: import `.rail/ruleset.json` as a
-   ruleset, allow squash merging only, and delete merged branches. `rail doctor` links each page.
+2. Make three settings on GitHub, which a cloud session can't change: import the ruleset, set the squash
+   message, and delete merged branches. The ruleset is one file,
+   [`seed/ruleset.json`](seed/ruleset.json) here and `.rail/ruleset.json` in your project: download it and
+   choose it under Settings > Rules > Rulesets > New ruleset > Import a ruleset. `rail doctor` links each page.
 3. Approve the environment's setup script when Claude proposes it, so later sessions start ready.
 
 After that, hand work over: say what you want in a session, or label a GitHub issue `rail`. Claude runs

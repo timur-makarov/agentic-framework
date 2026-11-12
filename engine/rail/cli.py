@@ -128,7 +128,9 @@ def contract_pr(f):
     """The title and description of a contract pull request: the ticket as it stands, for a person to approve."""
     title = f"{f.id}: [contract] {f.ticket.title}"
     body = (f"The contract of ticket {f.id} ({f.tier}). Approve it with the label `rail:go`, or say \"accept {f.id}\"."
-            f" To change it, comment here. To reject it, close this pull request.\n\n{f.ticket.text}")
+            f" To change it, comment here. To reject it, close this pull request.\n\n"
+            f"**Don't merge it.** It holds only the contract: the work comes after your approval, on this same pull"
+            f" request, and the `rail` check stays red until it ships.\n\n{f.ticket.text}")
     return title, body
 
 

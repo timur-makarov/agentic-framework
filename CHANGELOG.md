@@ -63,3 +63,6 @@ One line for each change, saying why.
 - Make rail amend show a contract that changed before approval on its pull request, and open the contract pull request for a ticket from intake once the agent has written its contract; before, such a wait had no pull request to label.
 - Remove the research folder (the plan, the spec and the study notes the framework was built from): the framework stands on its README and rail docs. Comments, tests and this changelog no longer cite it.
 - Remove names left from building the framework: a status line that named a build phase, the old `resumable` key in next's answer (`held` says the same, with more), the reading of per-ID branches that only a test project ever had, and a test file named after a roadmap phase.
+- Make the ruleset file name the default branch, so the one file in seed/ fits every repository and can be imported straight from the framework; the README and the docs say where it is and that GitHub wants it downloaded first.
+- Say on a contract pull request that it must not be merged, because its page has a merge button and a person took it for the approval; with the ruleset GitHub refuses the merge.
+- Let doctor count a ruleset that allows squash merges only on the base branch as squash only, so a repository set up from the ruleset file passes without also changing its merge buttons.

@@ -82,19 +82,15 @@ def doctor_checks(project, repo):
     except ForgeError as e:
         return [("gh", False, f"gh can't read {repo}: {e}. Log in with gh auth login")]
     found.append(("gh", True, f"gh reads {repo}"))
-    squash_only = (info.get("allow_squash_merge") and not info.get("allow_merge_commit")
-                   and not info.get("allow_rebase_merge"))
-    message = info.get("squash_merge_commit_title") == "PR_TITLE" and info.get("squash_merge_commit_message") == "PR_BODY"
-    found.append(("squash merging", bool(squash_only and message),
-                  "squash only, with the PR title and description" if squash_only and message else
-                  f"at https://github.com/{repo}/settings (General > Pull Requests) allow squash merging only, with"
-                  " 'Pull request title and description' as the default message"))
     base = project.base
-    contexts, plan_limit = set(), False
+    contexts, plan_limit, ruleset_squash = set(), False, False
     try:
         for rule in api("GET", f"repos/{repo}/rules/branches/{base}") or []:
+            parameters = rule.get("parameters") or {}
             if rule.get("type") == "required_status_checks":
-                contexts |= {c.get("context") for c in rule.get("parameters", {}).get("required_status_checks", [])}
+                contexts |= {c.get("context") for c in parameters.get("required_status_checks", [])}
+            elif rule.get("type") == "pull_request":
+                ruleset_squash = parameters.get("allowed_merge_methods") == ["squash"]
     except ForgeError as e:
         plan_limit = e.status == 403 and "Upgrade" in str(e)
     try:
@@ -103,6 +99,14 @@ def doctor_checks(project, repo):
         contexts |= {c.get("context") for c in protection.get("checks", [])}
     except ForgeError:
         pass
+    # Squash only: the repository's own setting, or the ruleset's allowed merge methods on the base branch.
+    squash_only = ruleset_squash or (info.get("allow_squash_merge") and not info.get("allow_merge_commit")
+                                     and not info.get("allow_rebase_merge"))
+    message = info.get("squash_merge_commit_title") == "PR_TITLE" and info.get("squash_merge_commit_message") == "PR_BODY"
+    found.append(("squash merging", bool(squash_only and message),
+                  "squash only, with the PR title and description" if squash_only and message else
+                  f"at https://github.com/{repo}/settings (General > Pull Requests) allow squash merging only (or let"
+                  " the ruleset do it), with 'Pull request title and description' as the default message"))
     if plan_limit and "rail" not in contexts:
         # Private repositories on GitHub's free plan have no rulesets or branch protection. The engine still merges
         # only on a green rail check, but nothing stops a person merging early.

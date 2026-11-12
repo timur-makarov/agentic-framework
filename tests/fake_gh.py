@@ -157,8 +157,10 @@ def handle(state, method, path, body):
         return 0 if log is not None else 1
     if len(rest) == 3 and rest[0] == "rules" and rest[1] == "branches":
         required = [{"context": c} for c in state.get("required", [])]
-        return respond(200, [{"type": "required_status_checks",
-                              "parameters": {"required_status_checks": required}}] if required else [])
+        rules = [{"type": "required_status_checks", "parameters": {"required_status_checks": required}}] if required else []
+        if state.get("ruleset_squash"):
+            rules.append({"type": "pull_request", "parameters": {"allowed_merge_methods": ["squash"]}})
+        return respond(200, rules)
     if len(rest) == 4 and rest[0] == "branches" and rest[2:] == ["protection", "required_status_checks"]:
         return respond(404, {"message": "Branch not protected"})
     return respond(404, {"message": f"fake gh: no route for {method} {url.path}"})

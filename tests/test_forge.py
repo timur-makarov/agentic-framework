@@ -292,6 +292,7 @@ class Desk(RailTest):
         a, b, github = self.github_pair()
         a.add(ticket(title="Change the config", tier="HIGH", scope=("src/config/**",), check="test -f src/config/app.toml"))
         self.assertIn("test -f src/config/app.toml", github.pr(1)["body"])
+        self.assertIn("Don't merge it", github.pr(1)["body"])  # the page has a merge button; the label approves
         changed = os.path.join(self.tmp, "1.md")
         with open(changed, "w") as f:
             f.write(ticket(title="Change the config and its docs", tier="HIGH", scope=("src/config/**", "docs/**"),
@@ -344,6 +345,9 @@ class Doctor(RailTest):
         found = {s["step"]: s for s in a.rail("doctor", expect=None)["steps"]}
         for name in ("squash merging", "required check", "labels", "merged branches"):
             self.assertEqual(found[name]["result"], "pass", found[name])
+        # Merge commits allowed in the repository's settings, and squash only by the ruleset: that is squash only.
+        github.update(lambda s: (s["settings"].update(allow_merge_commit=True), s.__setitem__("ruleset_squash", True)))
+        self.assertEqual({s["step"]: s for s in a.rail("doctor", expect=None)["steps"]}["squash merging"]["result"], "pass")
         github.update(lambda s: s.__setitem__("required", []))
         missing = {s["step"]: s for s in a.rail("doctor", expect=3)["steps"]}["required check"]
         self.assertIn("import .rail/ruleset.json at https://github.com/acme/app/settings/rules", missing["detail"])
