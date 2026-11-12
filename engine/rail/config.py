@@ -27,7 +27,7 @@ DEFAULTS = {
     "review": {"command": REVIEW_COMMAND, "model": ""},
     "retry": {"budget": 2},
     "consult": {"command": "claude -p --safe-mode --tools Read,Grep,Glob", "model": ""},
-    "claim": {"stale_minutes": 60},
+    "claim": {"stale_minutes": 30, "save_minutes": 10},
     "sweep": {"after": 20},
     "map": {"depth": 1, "ignore": []},
     "rules": [],

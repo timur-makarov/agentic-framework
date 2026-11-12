@@ -18,7 +18,7 @@ from .ticket import Ticket, branch_name, highest, lint, rank, with_id, with_tier
 from .util import RailError, age, cloud, disposable, match_any, session_url
 
 VERBS = ("init", "add", "accept", "amend", "answer", "next", "advance", "status", "context", "drop", "doctor", "ci",
-         "consult", "docs", "intake", "sweep", "provision")
+         "consult", "docs", "intake", "sweep", "provision", "save")
 STALE_DAYS = 3
 
 
@@ -135,6 +135,37 @@ def contract_pr(f):
     return title, body
 
 
+def restart_on_base(project, f, run):
+    """A pull request merged before its ticket shipped has put the branch's commits on the base branch as one
+    squash, and a branch can't be rebased over its own squash. So the branch starts again from the base: the commits
+    made after the merge are replayed, and nothing else. Uncommitted work in the worktree is kept."""
+    t = f.t
+    merged_head = f.pr["head"]["sha"] if f.pr and f.pr.get("merged_at") and f.pr.get("head") else None
+    base_tip, tip = gitx.rev(project.base_ref, project.root), gitx.rev(t.ref, project.root) if t.ref else None
+    if not merged_head or not tip or not base_tip or gitx.ok(["merge-base", "--is-ancestor", base_tip, tip], project.root):
+        return True  # no merged pull request to start again from, or the branch is on the base already
+    if not gitx.ok(["merge-base", "--is-ancestor", merged_head, tip], project.root):
+        return True  # the branch isn't built on what was merged: an ordinary rebase is right for it
+    project.note_rewrite(t.branch)
+    if tip == merged_head:
+        if t.worktree:
+            moved = gitx.git(["reset", "--quiet", "--keep", base_tip], t.worktree, check=False).returncode == 0
+        else:
+            moved = gitx.update_ref(project.root, t.ref, base_tip, tip)
+    elif t.worktree:
+        moved = gitx.git(["rebase", "--quiet", "--autostash", "--onto", base_tip, merged_head], t.worktree,
+                         check=False).returncode == 0
+        if not moved:
+            gitx.git(["rebase", "--abort"], t.worktree, check=False)
+    else:
+        return True  # commits made after the merge are replayed once the ticket has its worktree
+    return run.record("rebase", moved, project.patch_id(t.ref) if moved else None,
+                      f"onto {project.base}: its pull request was merged before the work shipped",
+                      output=f"The branch {t.branch} couldn't be moved onto {project.base} after its pull request was"
+                             f" merged early. Rebase it yourself in {project.rel(t.worktree) if t.worktree else 'a worktree'}"
+                             f" (git rebase --onto {project.base} {merged_head[:12]}), then run: rail next")
+
+
 def ensure_pr(project, f, receipts):
     """Every wait after add has a PR to label: a contract PR at add for tiers outside auto_tiers,
     and a PR at claim for the rest."""
@@ -183,7 +214,8 @@ def person_comments(project, f):
     """PR comments since the ticket's last journal event: what a person said during the wait."""
     if not f.pr:
         return ""
-    since = f.t.events[-1]["at"] if f.t.events else ""
+    moves = [e["at"] for e in f.t.events if e.get("event") != "saved" and e.get("at")]  # a save isn't a move
+    since = moves[-1] if moves else ""
     said = [c["body"].strip() for c in project.forge.comments(f.pr["number"])
             if c.get("created_at", "") >= since and c.get("body")]
     return "\n".join(said)
@@ -210,6 +242,20 @@ def transition(project, f, code):
         make_ready(project, t, run, fresh=True)
         tickets, facts = load(project)
         ensure_pr(project, facts[t.id], run.steps)
+    elif code == "CONTRACT_MERGED":
+        # A person merged the contract's pull request. That is their approval: the ticket goes on, on its branch,
+        # made again from the base when GitHub deleted it, and gets a new pull request at its claim.
+        if not t.name:
+            name = branch_name(f.ticket)
+            gitx.update_ref(project.root, f"refs/heads/{name}", gitx.rev(project.base_ref, project.root), None)
+            t.branch, t.ref = name, f"refs/heads/{name}"
+        ensure_local(project, t)
+        restart_on_base(project, f, run)
+        run.events.append(accepted_event(t.id, f.ticket, f.tier, "person", "merge"))
+        project.append_events(t, run.events, "accept: the contract was merged")
+        run.events = []
+        run.steps.append({"step": "contract", "status": "ran", "result": "pass",
+                          "detail": "its pull request was merged before the work: taken as the approval"})
     elif code == "GO":
         # A person's rail:go: it approves a contract or an amend, or continues any other wait.
         note = person_comments(project, f) or None
@@ -263,6 +309,16 @@ def settle(project, nn, explicit):
             reran_setup = True
             continue
         if code not in TRANSITIONS:
+            if f.state in OPEN and f.forge and not f.pr_open and f.t.branch and not f.claimed_elsewhere:
+                # Its pull request was merged or lost before the work shipped: the ticket goes on, with a new one.
+                run = steps.Run(project, f.t)
+                if f.contract_merged:
+                    restart_on_base(project, f, run)
+                    if run.events:
+                        commit(project, f, run, "start again from the base")
+                    receipts += run.steps
+                if run.ok and ensure_pr(project, f, receipts):
+                    continue
             return f, receipts
         done, run = transition(project, f, code)
         receipts += run.steps
@@ -1019,6 +1075,70 @@ def init_task(project):
     return answer(owner="agent", code="INIT_TASK", action={"kind": "agent_task", "brief": brief}, cwd=".")
 
 
+# --- saving work in flight ---------------------------------------------------------------
+
+
+def save_work(project, f, via):
+    """Commit a ticket's in-scope changes as they are and push them, with a `saved` event. Nothing is checked: the
+    point is that a machine that goes away takes at most a few minutes of work with it, and that other sessions see
+    the ticket is alive. Returns (paths saved, paths left because they are outside scope, the push's result), or
+    None when there was nothing to save and the ticket moved a moment ago."""
+    t = f.t
+    changes = gitx.dirty(t.worktree, exclude=[".rail/journal"])
+    inside = [c for c in changes if c.startswith(".rail/tickets/") or match_any(f.ticket.scope, c)]
+    outside = [c for c in changes if c not in inside]
+    quiet = f.quiet_minutes
+    if not inside and quiet is not None and quiet < project.config["claim"]["save_minutes"]:
+        return None
+    if inside:
+        # [skip ci]: GitHub starts no workflow for it. The check that counts runs on the commit a ship pushes.
+        gitx.git(["add", "-A", "--", *inside], t.worktree)
+        gitx.git(["commit", "--quiet", "-m", f"{t.id}: save work in progress [skip ci]", "--", *inside], t.worktree)
+    pushed = project.append_events(t, [event(t.id, "saved", via=via, files=len(inside))], "save [skip ci]")
+    return inside, outside, pushed
+
+
+def save_all(project, via, only=None):
+    """Save every ticket this session has in flight. Returns (receipts, briefs for the agent)."""
+    tickets, facts = load(project)
+    receipts, notes = [], []
+    for f in facts.values():
+        if only and f.id != only:
+            continue
+        if not (f.in_flight and f.claimed and f.worktree and f.ticket):
+            if only:
+                notes.append(f"Ticket {f.id} is {f.state}: there is no work in flight to save here.")
+            continue
+        if f.claimed_elsewhere:
+            if f.taken_from_me or only:
+                notes.append(first_match(f)[2]["brief"])
+            continue
+        saved = save_work(project, f, via)
+        if saved is None:
+            continue
+        inside, outside, pushed = saved
+        detail = f"ticket {f.id}: {len(inside)} files" + ("" if pushed == "ok" or not project.remote else f", push {pushed}")
+        receipts.append({"step": "save", "status": "ran", "result": "pass", "detail": detail})
+        if outside:
+            notes.append(f"Ticket {f.id}: not saved, because they are outside scope_paths: {', '.join(outside)}")
+        if pushed == "rejected":
+            notes.append(f"Ticket {f.id}: the push was refused, so its branch moved on the remote. Run rail next.")
+    return receipts, notes
+
+
+def cmd_save(project, args):
+    """Commit and push the work in flight as it is, with no checks: `rail save`, or `rail save NN` for one ticket.
+    The hooks run it at the end of each turn and every few minutes; an agent runs it where no hook does."""
+    project.sync()
+    only = None
+    key = getattr(args, "ticket", None)
+    if key:
+        only = project.find(key, project.tickets()).id
+    receipts, notes = save_all(project, "save", only)
+    brief = "\n".join(notes) or ("Saved." if receipts else "Nothing to save.")
+    return answer(code="SAVED", action={"kind": "rest", "brief": brief}, steps_=receipts)
+
+
 # --- provisioning: the machine carries the tools --------------------------------------
 
 
@@ -1258,6 +1378,7 @@ def parser():
     intake.add_argument("--title")
     intake.add_argument("--brief", help="a file with the request, verbatim")
     verb("sweep", "review what merged without a review, and turn its findings into tickets", ticket=False)
+    verb("save", "commit and push the work in flight as it is, with no checks")
     provision = verb("provision", "install what the checks need on this machine (cloud sessions and CI only)",
                      ticket=False)
     provision.add_argument("--force", action="store_true", help="run it again on a machine that has it")

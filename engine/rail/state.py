@@ -53,8 +53,11 @@ class Facts:
         self.explicit = False
         self.lint_errors = lint(t.ticket, expect_id=t.id) if t.ticket else ["the ticket file is missing"]
         self.accepted = t.last("accepted")
-        self.claimed = t.last("claimed")
+        # The newest claim, the remote's journal included: after a takeover this clone's own branch doesn't have it.
+        claims = [e for e in list(t.events) + list(t.remote_events) if e.get("event") == "claimed"]
+        self.claimed = sorted(claims, key=lambda e: e.get("at", ""))[-1] if claims else None  # of equal times, the later
         self.dropped_event = t.last("dropped")
+        self.contract_merged = False
         self.patch_id = None
         self.dirty = []
         self.shipped = None
@@ -154,8 +157,16 @@ class Facts:
 
     @property
     def quiet_minutes(self):
-        """Minutes since the ticket's last journal event: every engine move writes one and pushes it."""
-        return minutes_since(self.t.events[-1].get("at")) if self.t.events else None
+        """Minutes since the ticket's last journal event: every engine move writes one and pushes it, and a
+        session at work saves at least every claim.save_minutes."""
+        times = [e.get("at", "") for e in list(self.t.events) + list(self.t.remote_events) if e.get("at")]
+        return minutes_since(max(times)) if times else None
+
+    @property
+    def taken_from_me(self):
+        """Another session took this ticket over while this session's worktree for it is still here."""
+        mine = any(e.get("event") == "claimed" and e.get("session") == self.project.session for e in self.t.events)
+        return bool(self.worktree) and mine and self.claimed_elsewhere
 
     @property
     def held(self):
@@ -177,11 +188,17 @@ class Facts:
 
     def _state(self):
         t, project = self.t, self.project
-        if t.merged or (self.pr and (self.pr.get("merged") or self.pr.get("merged_at"))):
-            return "merged"  # GitHub's list of pull requests carries merged_at, and no merged flag
-        if self.dropped_event or not t.name:
+        # GitHub's list of pull requests carries merged_at, and no merged flag.
+        merged_at = (self.pr or {}).get("merged_at") or ("9" if (self.pr or {}).get("merged") else None)
+        ships = [e.get("at", "") for e in t.events if e.get("event") == "shipped"]
+        if t.merged or (merged_at and ships and merged_at >= max(ships)):
+            return "merged"
+        # A pull request merged before its ticket shipped, or a ticket file on the base branch with no branch and no
+        # ship: a person merged the contract. That is their approval; the work is still to do.
+        self.contract_merged = not self.dropped_event and (bool(merged_at) or (t.on_base and not t.name and not ships))
+        if self.dropped_event or (not t.name and not self.contract_merged):
             return "dropped"  # a dropped event, or the ID is all that is left: its branch is gone
-        if self.pr and self.pr.get("state") == "closed":
+        if self.pr and self.pr.get("state") == "closed" and not merged_at:
             return "dropped"  # the PR was closed without a merge
         if not self.accepted:
             return "new"

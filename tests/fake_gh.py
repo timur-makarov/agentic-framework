@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from urllib.parse import parse_qs, urlparse
 
 
@@ -48,7 +49,7 @@ def list_view(state, pr):
     view = pr_view(state, pr)
     view.pop("merged", None)
     view.pop("mergeable_state", None)
-    view["merged_at"] = "2026-11-12T12:00:00Z" if pr.get("merged") else None
+    view["merged_at"] = pr.get("merged_at")
     return view
 
 
@@ -121,7 +122,8 @@ def handle(state, method, path, body):
         git(state["bare"], "update-ref", f"refs/heads/{pr['base']}", commit, base)
         if state.get("delete_branch_on_merge"):
             git(state["bare"], "update-ref", "-d", f"refs/heads/{pr['head']}")
-        pr.update(state="closed", merged=True, merge_commit_sha=commit, frozen_sha=view["head"]["sha"])
+        pr.update(state="closed", merged=True, merge_commit_sha=commit, frozen_sha=view["head"]["sha"],
+                  merged_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
         return respond(202, {"status": "pending", "details": {"message": "Merge request enqueued."}})
     if len(rest) == 3 and rest[0] == "issues" and rest[2] == "labels" and method == "POST":
         target = find_pr(rest[1]) or next(i for i in issues if i["number"] == int(rest[1]))

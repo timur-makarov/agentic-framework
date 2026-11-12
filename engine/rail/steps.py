@@ -8,7 +8,7 @@ from . import doclint, gitx, rules
 from .project import event, events_path, ticket_path
 from .state import raised_tier
 from .ticket import Ticket, lint, rank
-from .util import match_any, run_shell, tail
+from .util import match_any, minutes_since, run_shell, tail
 
 class Run:
     """The receipt of one command: the steps it ran, their events, and the first failure."""
@@ -54,8 +54,19 @@ class Run:
         return self.failure is None
 
 
+def keep_alive(project, t):
+    """Before a long command inside advance: when the ticket's last pushed event is older than claim.save_minutes,
+    push one. Another session reads a ticket with no event for claim.stale_minutes as abandoned."""
+    if not getattr(t, "branch", None) or not getattr(t, "events", None):
+        return
+    quiet = minutes_since(t.events[-1].get("at"))
+    if quiet is not None and quiet >= project.config["claim"]["save_minutes"]:
+        project.append_events(t, [event(t.id, "saved", via="advance", files=0)], "still at work [skip ci]")
+
+
 def run_command(project, cwd, nn, step, command, run, patch_id=None, label=None):
     """Run one configured command in `cwd` and record it."""
+    keep_alive(project, run.t)
     code, output, ms = run_shell(command, cwd, {"RAIL_TICKET": nn, "RAIL_BASE": project.base_ref},
                                  project.config["commands"]["timeout_secs"])
     status = "timeout" if code is None else f"exit {code}"

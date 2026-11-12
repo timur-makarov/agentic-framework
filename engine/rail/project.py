@@ -65,6 +65,8 @@ class TicketInfo:
         self.id_taken = False      # the ID is in the remote's counter branch, or the mkdir without a remote
         self.label = ""            # the title the ticket was added with, kept by the counter branch
         self.worktree = None
+        self.on_base = False       # the ticket file is on the base branch
+        self.remote_events = []    # the remote branch's journal, when it differs from the local branch's
 
     @property
     def name(self):
@@ -123,8 +125,9 @@ class Project:
             return found.setdefault(nn, TicketInfo(nn))
 
         prefixes = ["refs/heads"] + ([f"refs/remotes/{self.remote}"] if self.remote else [])
-        refs = gitx.out(["for-each-ref", "--format=%(refname)", *prefixes], self.root).splitlines()
-        for ref in sorted(refs):
+        heads = gitx.out(["for-each-ref", "--format=%(objectname) %(refname)", *prefixes], self.root).splitlines()
+        tips = {ref: sha for sha, ref in (line.split(" ", 1) for line in heads)}
+        for ref in sorted(tips):
             if m := re.match(r"refs/heads/((\d+)-.+)$", ref):
                 info(m.group(2)).branch = info(m.group(2)).branch or m.group(1)
             elif self.remote and (m := re.match(rf"refs/remotes/{self.remote}/((\d+)-.+)$", ref)):
@@ -149,7 +152,7 @@ class Project:
             listing = gitx.out(["ls-tree", "--name-only", base, ".rail/tickets/"], self.root)
             for path in listing.splitlines():
                 if m := re.match(r"\.rail/tickets/(\d+)\.md$", path):
-                    info(m.group(1))
+                    info(m.group(1)).on_base = True
 
         trees = gitx.worktrees(self.root)
         specs = []
@@ -161,6 +164,11 @@ class Project:
                 t.ref = f"refs/remotes/{self.remote}/{t.remote_branch}"
             source = t.ref or base
             specs += [f"{source}:{ticket_path(nn)}", f"{source}:{events_path(nn)}", f"{source}:{review_path(nn)}"]
+            other = f"refs/remotes/{self.remote}/{t.remote_branch}" if t.branch and t.remote_branch else None
+            if other and tips.get(other) != tips.get(t.ref):
+                # The remote branch moved, or this one has commits it lacks: another session may have taken the
+                # ticket over, and its journal says so.
+                specs.append(f"{other}:{events_path(nn)}")
         blobs = gitx.read_blobs(specs, self.root)
         self.orphans = []
         for nn, t in list(found.items()):
@@ -169,6 +177,8 @@ class Project:
             t.ticket = Ticket(text) if text is not None else None
             t.events = parse_events(blobs.get(f"{source}:{events_path(nn)}"))
             t.review_text = blobs.get(f"{source}:{review_path(nn)}")
+            if t.branch and t.remote_branch:
+                t.remote_events = parse_events(blobs.get(f"refs/remotes/{self.remote}/{t.remote_branch}:{events_path(nn)}"))
             if t.ticket is None and not t.merged and not t.id_taken:
                 # A branch named like a ticket that belongs to no ticket: listed for the person, never touched.
                 self.orphans.append(t.name)

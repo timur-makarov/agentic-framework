@@ -94,6 +94,42 @@ def guard():
     return 0
 
 
+def _save(via):
+    """Save this session's work in flight. Returns the notes for the agent, such as a takeover."""
+    from .cli import save_all
+
+    data = _input()
+    try:
+        project = Project(data.get("cwd") or os.getcwd())
+    except RailError:
+        return []
+    project.session = data.get("session_id") or project.session
+    project.sync()
+    receipts, notes = save_all(project, via)
+    return notes
+
+
+def stop():
+    """Stop: the agent's turn ended. Save what it has, so a machine that goes away loses nothing of this turn. It
+    never blocks the stop and says nothing."""
+    _save("stop")
+    return 0
+
+
+def pulse():
+    """PostToolUse, at most every few minutes (the hook's own command checks the stamp first): save the work in
+    flight while the agent works, which also shows other sessions the ticket is alive."""
+    stamp = os.environ.get("CLAUDE_CODE_SESSION_ID") or "any"
+    try:
+        Project(os.getcwd()).cache_write("pulse", stamp, "1")
+    except RailError:
+        pass
+    notes = _save("pulse")
+    if notes:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "\n".join(notes)}}))
+    return 0
+
+
 NEEDS = {
     "APPROVE_CONTRACT": "approve the contract", "APPROVE_AMEND": "approve the amended contract",
     "MERGE_BY_PERSON": "merge", "RETRY_CAP": "stuck at the retry budget", "STUCK_REVIEW": "the review timed out",
@@ -142,7 +178,7 @@ def notify():
     return 0
 
 
-HOOKS = {"session-start": session_start, "guard": guard, "notify": notify}
+HOOKS = {"session-start": session_start, "guard": guard, "notify": notify, "stop": stop, "pulse": pulse}
 
 
 def run(name):

@@ -33,7 +33,9 @@ READERS = {
     "consult.command": "the consult pack: a read-only model, with the brief on stdin",
     "consult.model": "the consult pack: the model consult runs on, set the same way as review.model",
     "claim.stale_minutes": "next: minutes without a journal event after which another session's work in flight is"
-                           " taken to be abandoned and resumed",
+                           " taken to be abandoned and resumed. Keep it above your longest command",
+    "claim.save_minutes": "the save hooks and advance: work in flight is saved, and shows it is alive, at least this"
+                          " often while a session works",
     "sweep.after": "next: LOW tickets and ticketless commits since the last sweep before one is offered",
     "map.depth": "doc-lint: the directory depth ## Areas must cover",
     "map.ignore": "doc-lint: directories that need no ## Areas row",

@@ -38,7 +38,9 @@ command = '''claude -p --safe-mode --system-prompt-file .rail/engine/reviewer.md
 model = ""                                # the model the reviewer runs on, such as "claude-opus-5-5"; empty is the CLI's default
 
 [claim]
-stale_minutes = 60                        # reader: next; another session's work with no journal event for this long is resumed
+stale_minutes = 30                        # reader: next; another session's work with no journal event for this long is
+                                          # resumed. Keep it above your longest command (timeout_secs)
+save_minutes = 10                         # reader: the save hooks and advance; work in flight is saved at least this often
 
 [consult]                                 # reader: the consult pack; read-only, with the brief on stdin
 command = "claude -p --safe-mode --tools Read,Grep,Glob"

@@ -6,7 +6,7 @@ consult); `next` makes the move, derives the facts again, and reads the table on
 
 from .project import ticket_path
 
-TRANSITIONS = {"ACCEPT_AUTO", "CLAIM", "RESUME", "CONSULT", "GO", "REBASE_BEHIND"}
+TRANSITIONS = {"ACCEPT_AUTO", "CLAIM", "RESUME", "CONSULT", "GO", "REBASE_BEHIND", "CONTRACT_MERGED"}
 MERGE_PATIENCE = 600  # seconds a requested merge may take before a person looks
 OPEN = ("implementing", "reviewing", "in-ci", "merge-ready")
 
@@ -77,7 +77,7 @@ def _implement(f):
         "Before you ship, write \"## Look at\" in the ticket: what a reader of this change should check.",
         f"When the Done Contract holds, run: rail advance {f.id}",
     ]
-    return "\n".join(lines) + _findings(f, "Open review findings:") + _note(f)
+    return "\n".join(lines) + _save_note(f) + _findings(f, "Open review findings:") + _note(f)
 
 
 def _assumptions(f):
@@ -123,8 +123,21 @@ def _go(f):
 def _held(f):
     where = f" ({f.claimed['session_url']})" if f.claimed and f.claimed.get("session_url") else ""
     quiet, limit = f.quiet_minutes, f.project.config["claim"]["stale_minutes"]
+    if f.taken_from_me:
+        return (f"Ticket {f.id} was taken over by another session{where}. Stop work on it here: its branch has moved on"
+                f" from this session's copy, and whatever isn't saved stays in {f.cwd} for you to look at. Take other"
+                f" work with rail next.")
     return (f"Ticket {f.id} is another session's work{where}, quiet for {quiet if quiet is not None else '?'} min."
             f" After {limit} min with no move, rail next resumes it here. To take it over now: rail next --ticket {f.id}")
+
+
+def _save_note(f):
+    """Where no hook saves for the session, the agent does: unsaved work is lost with the machine, and a ticket that
+    shows no life is taken to be abandoned."""
+    if f.project.cache_read("hooks", f.project.session or ""):
+        return ""
+    return (f"\nNothing saves your work for you in this session. Run rail save {f.id} every ten minutes or so of work"
+            " and before you stop: it pushes what you have, and shows other sessions this ticket is alive.")
 
 
 def _red_check(f):
@@ -164,6 +177,8 @@ ROWS = [
                f" rail amend {f.id} --file FILE"),
     ("GO",                 "agent", "script",      lambda f: "rail:go" in f.labels and f.state not in ("merged", "dropped")
                                                    and not (f.state == "new" and f.lint_errors),
+     lambda f: f"rail next --ticket {f.id}"),
+    ("CONTRACT_MERGED",    "agent", "script",      lambda f: f.state == "new" and f.contract_merged,
      lambda f: f"rail next --ticket {f.id}"),
     ("ACCEPT_AUTO",        "agent", "script",      lambda f: f.state == "new" and f.auto,
      lambda f: f"rail next --ticket {f.id}"),

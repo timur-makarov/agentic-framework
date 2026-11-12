@@ -268,6 +268,8 @@ def run(project, f, role, receipt, disputed=None, prompt=None):
     ledger = Ledger(t.events, doc)
     prompt = prompt or brief(project, f, role, ledger, disputed)
     timeout = project.config["commands"]["timeout_secs"]
+    from .steps import keep_alive
+    keep_alive(project, t)
     code, output, ms = run_shell(project.config["review"]["command"], wt,
                                  {"RAIL_TICKET": t.id, **model_env(project.config["review"]["model"])}, timeout, stdin=prompt)
     gitx.git(["reset", "--quiet", "--hard", head], wt)

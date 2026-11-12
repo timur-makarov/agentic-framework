@@ -13,6 +13,7 @@
       "Bash(rail intake *)",
       "Bash(rail sweep *)",
       "Bash(rail consult *)",
+      "Bash(rail save *)",
       "Bash(rail provision *)",
       "Bash(gh run watch *)"
     ],
@@ -80,6 +81,26 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/.rail/bin/rail hook notify"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$(find \"$CLAUDE_PROJECT_DIR/.git/rail/cache/pulse/${CLAUDE_CODE_SESSION_ID:-any}\" -mmin -10 2>/dev/null)\" ] || \"$CLAUDE_PROJECT_DIR\"/.rail/bin/rail hook pulse"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.rail/bin/rail hook stop"
           }
         ]
       }
