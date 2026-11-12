@@ -124,6 +124,14 @@ def make_ready(project, t, run, fresh=False):
             project.append_events(t, run.events, "setup")
 
 
+def contract_pr(f):
+    """The title and description of a contract pull request: the ticket as it stands, for a person to approve."""
+    title = f"{f.id}: [contract] {f.ticket.title}"
+    body = (f"The contract of ticket {f.id} ({f.tier}). Approve it with the label `rail:go`, or say \"accept {f.id}\"."
+            f" To change it, comment here. To reject it, close this pull request.\n\n{f.ticket.text}")
+    return title, body
+
+
 def ensure_pr(project, f, receipts):
     """Every wait after add has a PR to label (plan, section 7): a contract PR at add for tiers outside auto_tiers,
     and a PR at claim for the rest."""
@@ -136,9 +144,7 @@ def ensure_pr(project, f, receipts):
     if f.state == "new":
         if f.lint_errors or f.auto:
             return None
-        title = f"{t.id}: [contract] {f.ticket.title}"
-        body = (f"The contract of ticket {t.id} ({f.tier}). Approve it with the label `rail:go`, or say \"accept {t.id}\"."
-                f" To change it, comment here. To reject it, close this pull request.\n\n{f.ticket.text}")
+        title, body = contract_pr(f)
     elif f.state in OPEN:
         title = f"{t.id}: {f.ticket.title}"
         body = (f"{f.ticket.sections.get('Why', '')} (ticket {t.id})\n\nNot shipped yet: the rail check stays red until"
@@ -510,8 +516,23 @@ def cmd_amend(project, args):
         project.append_events(t, events, "amend")
     elif project.remote:
         project.push_branch(t.branch)
+    project.sync()
     tickets, facts = load(project)
-    return from_facts(facts[t.id])
+    nf, receipts = facts[t.id], []
+    if nf.state == "new" and not nf.lint_errors and not nf.auto:
+        # A contract a person has yet to approve: its pull request shows the contract as it now stands. A ticket
+        # from intake gets its contract pull request here, once the agent has written the contract.
+        from .forge import ForgeError
+        if nf.pr_open:
+            title, body = contract_pr(nf)
+            try:
+                project.forge.update_pr(nf.pr["number"], title=title, body=body)
+            except ForgeError as e:
+                receipts.append({"step": "pr", "status": "unavailable", "detail": str(e)[:200]})
+        elif ensure_pr(project, nf, receipts):
+            tickets, facts = load(project)
+            nf = facts[t.id]
+    return from_facts(nf, receipts)
 
 
 def cmd_sweep(project, args):

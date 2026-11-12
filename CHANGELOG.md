@@ -71,3 +71,4 @@ One line for each change, saying why.
 - Add [review] model and [consult] model, passed to the command as ANTHROPIC_MODEL and RAIL_MODEL; the model that answered is shown in the Evidence table. Record the cloud session's link in each claim and at the end of each pull request.
 - Add the cloud page to rail docs, put the cloud first in the README, and bring the loop, away, guards, GitHub, runner, environments, review and tickets pages up to date.
 - Write the cloud-first decision into PLAN (sections 0, 4, 5, 6, 10, 14, 15, 19, 21, the second part of the live run in 25, and the new section 26), DECISIONS and SPEC.
+- Make rail amend show a contract that changed before approval on its pull request, and open the contract pull request for a ticket from intake once the agent has written its contract; before, such a wait had no pull request to label.

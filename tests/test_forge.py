@@ -288,6 +288,33 @@ class Desk(RailTest):
         self.assertIn("the label rail:go approves it", waiting["waits"][0]["brief"])
         self.assertIn("pull/1", waiting["waits"][0]["brief"])
 
+    def test_a_contract_changed_before_approval_shows_on_its_pull_request(self):
+        a, b, github = self.github_pair()
+        a.add(ticket(title="Change the config", tier="HIGH", scope=("src/config/**",), check="test -f src/config/app.toml"))
+        self.assertIn("test -f src/config/app.toml", github.pr(1)["body"])
+        changed = os.path.join(self.tmp, "1.md")
+        with open(changed, "w") as f:
+            f.write(ticket(title="Change the config and its docs", tier="HIGH", scope=("src/config/**", "docs/**"),
+                           check="test -f src/config/app.toml && test -f docs/config.md"))
+        a.rail("amend", "1", "--file", changed)
+        self.assertEqual(github.pr(1)["title"], "1: [contract] Change the config and its docs")
+        self.assertIn("test -f docs/config.md", github.pr(1)["body"])
+
+    def test_a_high_ticket_from_an_issue_gets_its_contract_pull_request_once_the_contract_is_written(self):
+        a, b, github = self.github_pair()
+        github.update(lambda s: s["issues"].append({"number": 12, "title": "Rework the config", "body": "It is a mess.",
+                                                    "labels": ["rail"], "state": "open"}))
+        self.assertEqual(a.rail("next")["reason"]["code"], "TICKET_LINT")
+        self.assertEqual(github.read()["pulls"], [])  # no contract yet, so nothing to approve
+        written = os.path.join(self.tmp, "1.md")
+        with open(written, "w") as f:
+            f.write(ticket(title="Rework the config", tier="HIGH", scope=("src/config/**",),
+                           check="test -f src/config/app.toml", front=('external_id = "github#12"',)))
+        waiting = a.rail("amend", "1", "--file", written)
+        self.assertEqual((waiting["owner"], waiting["reason"]["code"]), ("human", "APPROVE_CONTRACT"))
+        self.assertEqual(github.pr(1)["title"], "1: [contract] Rework the config")
+        self.assertIn("pull/1", waiting["action"]["brief"])
+
     def test_an_issue_labelled_rail_comes_in_with_the_next_rail_next(self):
         a, b, github = self.github_pair()
         github.update(lambda s: s["issues"].append({"number": 12, "title": "Add can't add", "body": "add(2, 3) gives -1.",
