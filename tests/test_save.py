@@ -18,13 +18,23 @@ def events(fx, branch="1-fix-add", ref_prefix=""):
     return [json.loads(line) for line in text.splitlines()]
 
 
-def hook(fx, name, session="session-a", command=None, env_extra=None):
+def home(fx):
+    """The home folder the hooks of a test run with: the pulse stamp lives there, and must not be the real one's."""
+    path = os.path.join(os.path.dirname(fx.root), "hook-home")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def hook(fx, name, session="session-a", command=None, env_extra=None, project_dir=None):
     """Run a hook as Claude Code does: its settings command, with the event's JSON on stdin."""
-    payload = {"hook_event_name": name, "session_id": session, "cwd": fx.root}
-    env = dict(os.environ, CLAUDE_PROJECT_DIR=fx.root, CLAUDE_CODE_SESSION_ID=session, RAIL_CLOUD="0", **(env_extra or {}))
+    where = project_dir or fx.root
+    payload = {"hook_event_name": name, "session_id": session, "cwd": where}
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=where, CLAUDE_CODE_SESSION_ID=session, RAIL_CLOUD="0", **(env_extra or {}))
+    env["HOME"] = home(fx)
+    env.setdefault("GIT_CONFIG_GLOBAL", os.path.join(os.path.expanduser("~"), ".gitconfig"))
     env.pop("CLAUDE_CODE_REMOTE_SESSION_ID", None)
     return subprocess.run(["sh", "-c", command or f'"$CLAUDE_PROJECT_DIR"/.rail/bin/rail hook {name}'],
-                          input=json.dumps(payload), capture_output=True, text=True, cwd=fx.root, env=env)
+                          input=json.dumps(payload), capture_output=True, text=True, cwd=where, env=env)
 
 
 class Save(RailTest):
@@ -154,10 +164,34 @@ class Save(RailTest):
         a.git("fetch", "--quiet")
         self.assertEqual(a.git("show", "origin/1-fix-add:src/calc.py"), HALF_DONE)
 
-        stamp = a.path(".git", "rail", "cache", "pulse", "session-a")
+        stamp = os.path.join(home(a), ".cache", "rail", "pulse", "session-a")
         old = time.time() - 11 * 60
         os.utime(stamp, (old, old))
         hook(a, "PostToolUse", command=command)
+        a.git("fetch", "--quiet")
+        self.assertEqual(a.git("show", "origin/1-fix-add:src/calc.py"), HALF_DONE + "# more\n")
+
+    def test_the_pulse_hook_waits_as_long_in_a_session_that_stands_in_a_worktree(self):
+        # There .git is a file, so a stamp kept under the project's .git folder was never found, and the hook
+        # fetched and saved after every tool call.
+        a, b = self.remote_pair()
+        with open(a.path(".claude", "settings.json")) as f:
+            command = json.load(f)["hooks"]["PostToolUse"][0]["hooks"][0]["command"]
+        a.add(ticket())
+        a.rail("next")
+        tree = a.worktree("1")
+        a.write("src/calc.py", HALF_DONE, base=tree)
+        hook(a, "PostToolUse", command=command, project_dir=tree)
+        a.git("fetch", "--quiet")
+        self.assertEqual(a.git("show", "origin/1-fix-add:src/calc.py"), HALF_DONE)
+        a.write("src/calc.py", HALF_DONE + "# more\n", base=tree)
+        hook(a, "PostToolUse", command=command, project_dir=tree)  # the second call is skipped
+        a.git("fetch", "--quiet")
+        self.assertEqual(a.git("show", "origin/1-fix-add:src/calc.py"), HALF_DONE)
+        stamp = os.path.join(home(a), ".cache", "rail", "pulse", "session-a")
+        old = time.time() - 11 * 60
+        os.utime(stamp, (old, old))
+        hook(a, "PostToolUse", command=command, project_dir=tree)
         a.git("fetch", "--quiet")
         self.assertEqual(a.git("show", "origin/1-fix-add:src/calc.py"), HALF_DONE + "# more\n")
 

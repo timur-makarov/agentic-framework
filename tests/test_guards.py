@@ -192,8 +192,10 @@ class Deny(RailTest):
                         "gh api -X PUT https://api.github.com/repos/acme/app/pulls/5/merge",
                         "gh pr merge --squash https://github.com/acme/app/pull/5",
                         "gh pr -R acme/app merge 5", f"cd {other} && gh pr --repo acme/app merge 5",
-                        f"cd {other} && export GIT_DIR={a.root}/.git && git push origin main"):
+                        f"cd {other} && export GIT_DIR={a.root}/.git && git push origin main",
+                        f"cd {other} && export GH_REPO=acme/app && gh pr merge 5"):
             self.assertEqual(decide(a, command), "deny", command)
+        self.assertIsNone(decide(a, "export GH_REPO=someone/else; gh pr merge 3"))
         for command in ("gh api -X PUT repos/someone/else/pulls/3/merge-async", "gh pr merge 3 -R someone/else",
                         f"cd {other} && gh pr merge 4 --squash", "gh pr -R someone/else merge 3",
                         "gh pr merge https://github.com/someone/else/pull/3",

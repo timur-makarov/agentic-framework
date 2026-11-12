@@ -90,3 +90,5 @@ One line for each change, saying why.
 - Stop a URL in a merge message from passing for the repository a gh command names: `gh pr merge 5 --body "see github.com/other/repo"` was allowed. Also read `gh pr -R OWNER/NAME merge`, a full api.github.com endpoint, and an exported GIT_DIR.
 - Make the guard read command lines as the shell does: a newline inside quotes ends no line and a here-document's body is data, so a commit message or pull request body that mentions `git push -f` is no longer denied; a line continued with a backslash, a here-document fed to a shell, `$(...)` and backticks are now judged.
 - Leave files whose names say they hold secrets (.env, *.pem, *.key, SSH keys) out of saves, and say so: a save is pushed before verify and its secret scan run.
+- Keep the save hook's ten-minute stamp in the session's own file under the home folder: in a session whose project folder is a ticket's worktree the stamp was never found, so the hook fetched and saved after every tool call.
+- Follow an exported GH_REPO in the guard: `export GH_REPO=OWNER/NAME && gh pr merge 5` is judged by the repository it names.
