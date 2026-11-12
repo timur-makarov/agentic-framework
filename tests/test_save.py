@@ -46,6 +46,50 @@ class Save(RailTest):
         self.assertIn("api/handlers.py", a.git("status", "--porcelain", cwd=a.worktree("1")))
         self.assertEqual(a.rail("save")["action"]["brief"], "Nothing to save.")  # and a moment later there is nothing new
 
+    def test_a_save_takes_deleted_and_renamed_files(self):
+        # A staged deletion is on disk and in the index no more, and git add stops at a path it can't find.
+        a, b = self.remote_pair()
+        a.add(ticket())
+        a.rail("next")
+        tree = a.worktree("1")
+        a.write("src/old.py", "OLD = 1\n", base=tree)
+        a.write("src/keep.py", "KEEP = 1\n", base=tree)
+        self.assertEqual(a.rail("save")["steps"][0]["detail"], "ticket 1: 2 files")
+        a.git("rm", "--quiet", "src/old.py", cwd=tree)
+        a.git("mv", "src/keep.py", "src/kept.py", cwd=tree)
+        a.write("src/calc.py", HALF_DONE, base=tree)
+        self.assertEqual(a.rail("save")["steps"][0]["result"], "pass")
+        self.assertEqual(a.git("status", "--porcelain", cwd=tree), "")  # nothing is left staged
+        a.git("fetch", "--quiet")
+        files = a.git("ls-tree", "-r", "--name-only", "origin/1-fix-add", "src/").split()
+        self.assertEqual(sorted(files), ["src/calc.py", "src/kept.py"])
+        a.git("rm", "--quiet", "src/kept.py", cwd=tree)
+        done = hook(a, "stop")  # and the hook, with nothing else changed
+        self.assertEqual((done.returncode, done.stderr), (0, ""))
+        a.git("fetch", "--quiet")
+        self.assertEqual(a.git("ls-tree", "-r", "--name-only", "origin/1-fix-add", "src/").split(), ["src/calc.py"])
+        self.assertEqual(events(a)[-1]["event"], "saved")
+
+    def test_a_save_that_fails_in_a_hook_is_told_to_the_agent(self):
+        a, b = self.remote_pair()
+        a.add(ticket())
+        a.rail("next")
+        a.write("src/calc.py", HALF_DONE, base=a.worktree("1"))
+        refuse = a.path(".git", "hooks", "pre-commit")  # the project's own hook turns the commit down
+        a.write(refuse, "#!/bin/sh\necho no commits today >&2\nexit 1\n")
+        os.chmod(refuse, 0o755)
+        pulse = hook(a, "pulse")
+        self.assertEqual(pulse.returncode, 0, pulse.stderr)  # a hook never stops the session
+        told = json.loads(pulse.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("could not save the work in flight", told)
+        self.assertIn("no commits today", told)
+        stop = hook(a, "stop")
+        self.assertEqual((stop.returncode, stop.stdout), (0, ""))  # the stop is not held up
+        os.remove(refuse)
+        self.assertEqual(hook(a, "pulse").stdout, "")
+        a.git("fetch", "--quiet")
+        self.assertEqual(a.git("show", "origin/1-fix-add:src/calc.py"), HALF_DONE)
+
     def test_a_fresh_clone_resumes_from_the_last_save(self):
         a, b = self.remote_pair(config=CONFIG + "\n[claim]\nstale_minutes = 0\n")
         a.add(ticket())
