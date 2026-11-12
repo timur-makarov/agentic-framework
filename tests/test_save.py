@@ -7,7 +7,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from railtest import CONFIG, RailTest, ticket
+from railtest import CONFIG, Fixture, RailTest, ticket
 
 HALF_DONE = "def add(a, b):\n    return a * b  # not there yet\n"
 
@@ -120,6 +120,22 @@ class Save(RailTest):
         alive = [e for e in events(p) if e["event"] == "saved"]
         self.assertTrue(alive and all(e["via"] == "advance" for e in alive), alive)
 
+    def test_a_sign_of_life_before_a_review_keeps_the_branch_in_step_with_the_remote(self):
+        # The event is committed and pushed before the reviewer starts, and the worktree is reset to the head after it.
+        a, b = self.remote_pair(config=CONFIG + "\n[claim]\nsave_minutes = 0\n")
+        a.add(ticket(tier="MEDIUM"))
+        a.rail("next")
+        a.fix_calc("1")
+        a.rail("advance", "1")
+        a.git("fetch", "--quiet")
+        self.assertEqual(a.git("rev-parse", "1-fix-add"), a.git("rev-parse", "origin/1-fix-add"))
+        self.assertIn('"role": "review"', a.git("show", "origin/1-fix-add:.rail/journal/1-review.json"))
+        a.queue_reviews({"summary": "Looked again.", "findings": []})
+        a.write("src/calc.py", "def add(a, b):\n    return b + a\n", base=a.worktree("1"))
+        a.rail("advance", "1")  # a second ship and review still push
+        a.git("fetch", "--quiet")
+        self.assertEqual(a.git("rev-parse", "1-fix-add"), a.git("rev-parse", "origin/1-fix-add"))
+
     def test_the_brief_asks_for_saves_only_where_no_hook_makes_them(self):
         p = self.fixture()
         p.add(ticket())
@@ -159,6 +175,26 @@ class MergedContract(RailTest):
         self.assertEqual((on["ticket"], on["reason"]["code"]), ("1", "IMPLEMENT"))
         self.assertEqual(github.pr(2)["state"], "open")
         self.assertTrue(os.path.exists(os.path.join(b.worktree("1"), ".rail", "tickets", "1.md")))
+
+    def test_a_drop_holds_after_the_tickets_branch_is_gone(self):
+        # The contract reached the base branch by the merge. Dropped, and its branch deleted, the ticket must not
+        # look approved again: the drop is also marked in the counter branch.
+        a, b, github = self.github_pair()
+        github.update(lambda s: s.__setitem__("delete_branch_on_merge", True))
+        a.add(ticket(**self.HIGH))
+        github.person_merges(1)
+        self.assertEqual(b.rail("status")["tickets"][0]["state"], "new")  # the merge reads as an approval to take up
+        self.assertEqual(b.rail("drop", "1", "--reason", "another ticket does this work")["state"], "dropped")
+        a.git("fetch", "--quiet", "--prune")
+        self.assertIn("rail drop 1", a.git("log", "--format=%s", "origin/rail/ids"))
+        fresh = Fixture(os.path.join(self.tmp, "c"), remote=os.path.join(self.tmp, "remote.git"))
+        fresh.git("config", "remote.origin.url", a.git("config", "--get", "remote.origin.url").strip())
+        fresh.git("config", f"url.{os.path.join(self.tmp, 'remote.git')}.insteadOf",
+                  a.git("config", "--get", "remote.origin.url").strip())
+        fresh.github = github
+        self.assertEqual(fresh.rail("status")["tickets"][0]["state"], "dropped")
+        self.assertEqual(fresh.rail("next")["reason"]["code"], "NO_WORK")
+        self.assertEqual(fresh.add(ticket(title="Other", scope=("api/**",)))["ticket"], "2")  # and the ID isn't reused
 
     def test_a_work_pull_request_merged_before_its_ship_is_not_a_finished_ticket(self):
         a, b, github = self.github_pair()
