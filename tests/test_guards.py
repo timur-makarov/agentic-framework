@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -223,74 +224,106 @@ class Deny(RailTest):
                         f"cd {other} && gh api -X PUT repos/{{owner}}/{{repo}}/pulls/5/merge"):
             self.assertIsNone(decide(a, command), command)
 
-    def test_a_denied_command_is_found_wherever_the_shell_runs_it(self):
-        # Each denied command, in the places a shell line can put a command, and in the places where it is only text.
+    # Each denied command, in the places a shell line can put one. {C} is the command.
+    RUNS = ["{C}", "echo a; {C}", "echo a && {C}", "false || {C}", "echo a | cat; {C}", "echo a &\n{C}", "echo a\n{C}",
+            "echo a # can't\n{C}", "# it's\n{C}", "echo a # <<EOF\n{C}\nEOF", "echo $((1<<EOF))\n{C}\nEOF",
+            "echo $[1<<EOF]\n{C}\nEOF]", "echo ${{x:-<<EOF}}\n{C}\nEOF}}", "((x = 1 << EOF))\n{C}\nEOF",
+            "echo $'a\\'b'\n{C}", "echo \\$'a\\'\n{C}\n#'", "echo 'a\nb'\n{C}", "echo \"a\nb\"\n{C}", "echo a#b && {C}",
+            "echo https://x/#f && {C}", "echo ${{x/ #/}}; {C}", "echo \\ #; {C}", "echo a\\;#b; {C}",
+            "if true; then {C}; fi", "for i in 1; do {C}; done", "while true; do {C}; break; done", "{{ {C}; }}",
+            "( {C} )", "! {C}", "true && {{ {C}; }}", "bash -c '{C}'", "sh -c \"{C}\"", "bash -c 'echo a\n{C}'",
+            "eval '{C}'", "eval {C}", "echo $({C})", "echo `{C}`", "cat <({C})", "echo \"$({C})\"",
+            "bash <<EOF\n{C}\nEOF", "cat <<EOF | sh\n{C}\nEOF", "bash <<'EOF'\n{C}\nEOF", "\"bash\" <<EOF\n{C}\nEOF",
+            "{{ bash; }} <<EOF\n{C}\nEOF", "if true; then bash <<EOF\n{C}\nEOF\nfi", "! bash <<EOF\n{C}\nEOF",
+            ". /dev/stdin <<EOF\n{C}\nEOF", "cat <<E\"O\"F\nx\nEOF\n{C}\nE\"O\"F", "cat <<'E'OF\nEOF\n{C}\nE",
+            "env FOO=1 {C}", "FOO=1 {C}", "command {C}", "exec {C}", "time {C}", "nohup {C} &", "echo x | xargs {C}",
+            "cat <<EOF\ntext\nEOF\n{C}", "cat <<'EOF' > f\nit's\nEOF\n{C}", "echo \"$(cat <<'M'\nit's\nM\n)\"\n{C}",
+            "x=$(echo 1) && {C}", "echo \"a 'b\" && {C}", "echo 'a \"b' && {C}", "cd . && {C}", "cd \"$PWD\" && {C}",
+            "true || cd /tmp && {C}", "export FOO=1; {C}", "unset FOO; {C}", "[ -n \"a\" ] && {C}", "[[ a < b ]] && {C}",
+            "((1 < 2)) && {C}", "echo a >> f; {C}", "echo a 2>&1 | tee f; {C}", "echo a <<< 'b'\n{C}",
+            "printf '%s\\n' \"it's\" ; {C}", "git \\\n{A}", "echo 'x\ncat <<EOF\n' ; {C}\nEOF"]
+    DENIED = ["git push -f origin topic", "git push origin HEAD:main", "gh pr merge 5",
+              "gh api -X PUT repos/{owner}/{repo}/pulls/5/merge"]
+
+    def lines(self):
+        for command in self.DENIED:
+            for shape in self.RUNS:
+                if "{A}" in shape and not command.startswith("git "):
+                    continue
+                yield command, shape.replace("{C}", command).replace("{A}", command[4:]).replace("{{", "{").replace("}}", "}")
+
+    def judge(self, line):
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "engine"))
         from rail import guard
-        denied = ["git push -f origin topic", "git push origin HEAD:main", "gh pr merge 5",
-                  "gh api -X PUT repos/{owner}/{repo}/pulls/5/merge"]
-        runs = ["{C}", "echo a; {C}", "echo a && {C}", "echo a || {C}", "echo a | cat; {C}", "echo a &\n{C}", "echo a\n{C}",
-                "echo a # can't\n{C}", "# it's\n{C}", "echo a # <<EOF\n{C}\nEOF", "echo $((1<<EOF))\n{C}\nEOF",
-                "echo $'a\\'b'\n{C}", "echo 'a\nb'\n{C}", "echo \"a\nb\"\n{C}", "echo a#b && {C}",
-                "curl -s https://x/#f && {C}", "echo \\\n a; {C}", "if true; then {C}; fi", "for i in 1; do {C}; done",
-                "while true; do {C}; break; done", "{{ {C}; }}", "( {C} )", "! {C}", "true && {{ {C}; }}", "bash -c '{C}'",
-                "sh -c \"{C}\"", "eval '{C}'", "eval {C}", "echo $({C})", "echo `{C}`", "diff <({C}) /dev/null",
-                "bash <<EOF\n{C}\nEOF", "cat <<EOF | sh\n{C}\nEOF", "bash <<'EOF'\n{C}\nEOF", "timeout 60 {C}",
-                "nice -n 5 {C}", "env FOO=1 {C}", "FOO=1 {C}", "sudo -u root {C}", "command {C}", "exec {C}", "time {C}",
-                "nohup {C} &", "xargs -I{{}} {C}", "cat <<EOF\ntext\nEOF\n{C}", "cat <<'EOF' > f\nit's\nEOF\n{C}",
-                "echo \"$(cat <<'M'\nit's\nM\n)\"\n{C}", "x=$(echo 1) && {C}", "echo \"a 'b\" && {C}",
-                "echo 'a \"b' && {C}", "cd . && {C}", "cd \"$PWD\" && {C}", "true || cd /tmp && {C}", "export FOO=1; {C}",
-                "unset FOO; {C}", "[ -n \"a\" ] && {C}", "[[ a < b ]] && {C}", "((1 < 2)) && {C}", "echo a >> f; {C}",
-                "echo a 2>&1 | tee f; {C}", "echo a <<< 'b'\n{C}", "printf '%s\\n' \"it's\" ; {C}"]
-        text = ["git commit -m \"x\n\n{C}\"", "git commit -m 'x\n{C}'", "cat > f <<EOF\n{C}\nEOF",
-                "cat <<'EOF' > f\n{C}\nEOF", "git commit -m \"$(cat <<'M'\nx\n\n{C}\nM\n)\"", "echo '{C}'",
-                "echo x # {C}", "grep -r '{C}' ."]
+        return guard.deny(line, "main", "7-work", cwd="/proj", locate=lambda d: (True, "7-work"), repo="acme/app", cloud=True)
 
-        def decide_line(line):
-            return guard.deny(line, "main", "7-work", cwd="/proj", locate=lambda d: (True, "7-work"), repo="acme/app", cloud=True)
+    def test_a_denied_command_is_found_wherever_the_shell_runs_it(self):
+        missed = [line for command, line in self.lines() if not self.judge(line)]
+        self.assertEqual(missed, [])
+        # A command that is only named on a line of its own stays text.
+        for command in self.DENIED:
+            for line in (f"echo '{command}'", f'echo "{command}"', f"grep -r '{command}' .", f"echo x # {command}",
+                         f"git commit -m 'Say that {command} is denied'"):
+                self.assertIsNone(self.judge(line), line)
 
-        for command in denied:
-            missed = [t.format(C=command) for t in runs if not decide_line(t.format(C=command))]
-            self.assertEqual(missed, [], f"let through: {missed}")
-            wrong = [t.format(C=command) for t in text if decide_line(t.format(C=command))]
-            self.assertEqual(wrong, [], f"denied though it is only text: {wrong}")
+    def test_what_bash_really_runs_is_denied(self):
+        # The same lines in real bash, with git and gh replaced by stubs that note what they were asked: whenever
+        # bash runs the denied command, the guard must have denied the line. This is what tells the guard's
+        # reading of a line apart from the shell's.
+        bash = shutil.which("bash")
+        if not bash:
+            self.skipTest("no bash on this machine")
+        bin_dir, work = os.path.join(self.tmp, "stubs"), os.path.join(self.tmp, "work")
+        os.makedirs(bin_dir)
+        os.makedirs(work)
+        log = os.path.join(self.tmp, "ran.log")
+        for name in ("git", "gh"):
+            path = os.path.join(bin_dir, name)
+            with open(path, "w") as f:
+                f.write(f'#!/bin/sh\necho "{name} $*" >> "{log}"\n')
+            os.chmod(path, 0o755)
+        env = {"PATH": bin_dir + os.pathsep + "/usr/bin" + os.pathsep + "/bin", "HOME": work}
+        ran_and_passed, ran = [], 0
+        for command, line in self.lines():
+            if os.path.exists(log):
+                os.remove(log)
+            subprocess.run([bash, "-c", line], cwd=work, env=env, capture_output=True, text=True, timeout=20)
+            said = open(log).read().splitlines() if os.path.exists(log) else []
+            if command in said:
+                ran += 1
+                if not self.judge(line):
+                    ran_and_passed.append(line)
+        self.assertEqual(ran_and_passed, [])
+        self.assertGreater(ran, 200)  # the lines are real: bash runs the command in most of them
 
-    def test_the_guard_reads_command_lines_as_the_shell_does(self):
+    def test_every_line_of_a_command_is_read_as_a_command(self):
+        # The guard doesn't parse the shell, so it can't tell text from commands for certain; a line it took for
+        # text by mistake would run unjudged. So a line that starts with a denied command is denied wherever it
+        # stands, a message included, and the answer says what to do about it.
         p = self.fixture()
-        # A message that mentions a command is not that command: a newline inside quotes ends no line, and a
-        # here-document's body is data.
-        for command in ('git commit -q -m "Guard wrapped commands\n\ntimeout 60 git push -f origin main was not judged."',
-                        "git commit -m \"$(cat <<'MSG'\nFix the guard\n\ngit push --force origin main is denied now\nMSG\n)\"",
-                        "gh pr create --title Guard --body \"$(cat <<'BODY'\n## What\ngh pr merge 5 is denied.\nBODY\n)\"",
-                        "cat > notes.md <<EOF\ngit push -f origin main\nEOF", "cat <<-'EOF' > notes.md\n\tgh pr merge 5\n\tEOF",
-                        "echo '$(git push -f origin main)'", "echo 'it`s\ngit push -f origin main'"):
-            self.assertIsNone(decide(p, command, cloud=True), command)
-        # What the shell does run: a continued line, a here-document handed to a shell, a substitution, and the
-        # lines after something that only looks like a here-document.
         for command in ("git push \\\n  --force origin 7-work", "bash <<EOF\ngit push -f origin main\nEOF",
                         "cat <<EOF | sudo bash\ngh pr merge 5\nEOF", "echo $((1<<2))\ngit push -f origin main",
                         "echo $(git push -f origin main)", "echo `git push origin HEAD:main`",
                         'git commit -m "fix: $(git push -f origin main)"', 'echo "left open $(git push -f origin main',
                         "echo start\ngit push --force origin main", "echo \"a\nb\"\ngh pr merge 5",
-                        "diff <(git push -f origin main) x"):
-            self.assertEqual(decide(p, command, cloud=True), "deny", command)
-        # Nothing that only looks like a quote or a here-document hides the lines after it: an apostrophe or <<EOF
-        # in a comment, a shift in arithmetic, an escaped quote inside $'...'.
-        for denied in ("git push origin HEAD:main", "git push -f origin 7-work", "gh pr merge 5",
-                       "gh api -X PUT repos/{owner}/{repo}/pulls/5/merge"):
-            for command in (f"echo x # can't fail\n{denied}", f"# it's a comment\n{denied}",
-                            f"echo x # see <<EOF\n{denied}\nEOF", f"echo $((1<<EOF))\n{denied}\nEOF",
-                            f"((x = 1 << EOF))\n{denied}\nEOF", f"echo $'can\\'t'\n{denied}"):
-                self.assertEqual(decide(p, command, cloud=True), "deny", command)
-        # A # inside a word starts no comment: what follows on the line still runs.
-        for command in ("echo a#b && git push -f origin 7-work", "curl -s https://x/y#frag && gh pr merge 5",
+                        "diff <(git push -f origin main) x", "echo x # can't fail\ngit push origin HEAD:main",
+                        "timeout 60 bash <<EOF\ngit push -f origin 7-work\nEOF",
+                        "echo a#b && git push -f origin 7-work", "curl -s https://x/y#frag && gh pr merge 5",
                         "echo $# ${#x} && git push origin HEAD:main"):
             self.assertEqual(decide(p, command, cloud=True), "deny", command)
-        self.assertIsNone(decide(p, "echo a #b && git push -f origin main", cloud=True))  # a real comment
-        for command in ('git commit -m "fix #12: don\'t\n\ngit push -f origin main was wrong"',
-                        "git commit -m 'one' # then push", 'echo "$#" a#b ${#x}',
-                        "cat > notes.md <<'EOF'\n# it's a heading\ngit push -f origin main\nEOF"):
+        message = 'git commit -q -m "Guard wrapped commands\n\ngit push -f origin main was not judged."'
+        payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": message}, "cwd": p.root}
+        told = subprocess.run([p.path(".rail", "bin", "rail"), "hook", "guard"], input=json.dumps(payload),
+                              capture_output=True, text=True, cwd=p.root, env=dict(os.environ, RAIL_CLOUD="1"))
+        reason = json.loads(told.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn("If the line this is about is text in a message, reword it or pass the message from a file", reason)
+        # A message that names a command anywhere but at the start of a line is left alone.
+        for command in ('git commit -m "Guard wrapped commands\n\nThe guard now reads timeout 60 git push -f too."',
+                        "git commit -m \"$(cat <<'MSG'\nFix the guard\n\n- `git push --force` is denied now\nMSG\n)\"",
+                        "git commit -m 'one' # then push", 'echo "$#" a#b ${#x}'):
             self.assertIsNone(decide(p, command, cloud=True), command)
+        # A comment is read too: the guard can't be sure that it is one (`echo ${x/ #/}; git push -f` has none).
+        self.assertEqual(decide(p, "echo a #b && git push -f origin main", cloud=True), "deny")
 
     def test_the_owners_decision_on_a_finding_always_asks(self):
         # The flag first, or rail by path, would dodge a permission rule; an abbreviation would dodge both.
