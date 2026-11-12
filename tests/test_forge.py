@@ -9,6 +9,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from railtest import CONFIG, RailTest, ticket
 
 
+def events(fx, nn="1", branch="origin/1-fix-add"):
+    """A ticket's journal events as its remote branch has them."""
+    fx.git("fetch", "--quiet")
+    return [json.loads(line) for line in fx.git("show", f"{branch}:.rail/journal/{nn}-events.jsonl").splitlines()]
+
+
 def bare_log(github, branch="main"):
     bare = github.read()["bare"]
     return subprocess.run(["git", "--git-dir", bare, "log", "-1", "--format=%s%n%b", branch], capture_output=True,
@@ -156,6 +162,49 @@ class Approvals(RailTest):
         back = a.rail("next")
         self.assertEqual(back["reason"]["code"], "IMPLEMENT")
         self.assertIn('A person said: "Use the shared helper."', back["action"]["brief"])
+
+
+    def test_the_run_that_reads_a_persons_go_takes_the_waiting_ticket_on(self):
+        # The session that claimed the ticket ended at the wait. The label starts another run, and the label is
+        # removed once read: if that run left the ticket to the old claim, nothing would start a run for it again.
+        a, b, github = self.github_pair()
+        a.add(ticket())
+        a.rail("next", session="run-1")
+        github.label(1, "rail:needs-you")
+        self.assertEqual(a.rail("next", session="run-1")["waits"][0]["needs"], "HOLD")
+        github.label(1, "rail:go")
+        on = b.rail("next", session="run-2")
+        self.assertEqual((on["owner"], on["ticket"], on["reason"]["code"]), ("agent", "1", "IMPLEMENT"), on)
+        claims = [e for e in events(b) if e["event"] == "claimed"]
+        self.assertEqual((claims[-1]["session"], claims[-1]["takeover"]), ("run-2", True))
+        self.assertEqual(github.pr(1)["labels"], [])
+        told = a.rail("next", session="run-1")  # the first session, should it still be there, stands down
+        self.assertNotEqual((told["owner"], told.get("ticket")), ("agent", "1"), told)
+
+    def test_an_answer_given_in_another_session_lets_that_session_go_on(self):
+        a, b, github = self.github_pair()
+        a.add(ticket())
+        a.rail("next", session="run-1")
+        github.label(1, "rail:needs-you")
+        self.assertEqual(a.rail("next", session="run-1")["waits"][0]["needs"], "HOLD")
+        b.rail("accept", "1", "go on", session="chat-2")  # the person says it in a new conversation
+        on = b.rail("next", session="chat-2")
+        self.assertEqual((on["owner"], on["ticket"], on["reason"]["code"]), ("agent", "1", "IMPLEMENT"), on)
+        self.assertIn('A person said: "go on"', on["action"]["brief"])
+        self.assertEqual([e["session"] for e in events(b) if e["event"] == "claimed"], ["run-1", "chat-2"])
+
+    def test_a_go_on_a_ticket_at_work_leaves_the_claim_alone(self):
+        a, b, github = self.github_pair()
+        a.add(ticket())
+        a.rail("next", session="run-1")
+        github.label(1, "rail:go")  # nothing was waiting for it
+        seen = b.rail("next", session="run-2")
+        self.assertEqual(seen["reason"]["code"], "NO_WORK", seen)
+        self.assertEqual([h["ticket"] for h in seen["held"]], ["1"])
+        self.assertEqual([e["session"] for e in events(b) if e["event"] == "claimed"], ["run-1"])
+        self.assertEqual(github.pr(1)["labels"], ["rail:go"])  # left for the session at work to read
+        self.assertEqual(a.rail("next", session="run-1")["reason"]["code"], "IMPLEMENT")
+        self.assertEqual(github.pr(1)["labels"], [])
 
 
 class Merges(RailTest):

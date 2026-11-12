@@ -92,3 +92,5 @@ One line for each change, saying why.
 - Leave files whose names say they hold secrets (.env, *.pem, *.key, SSH keys) out of saves, and say so: a save is pushed before verify and its secret scan run.
 - Keep the save hook's ten-minute stamp in the session's own file under the home folder: in a session whose project folder is a ticket's worktree the stamp was never found, so the hook fetched and saved after every tool call.
 - Follow an exported GH_REPO in the guard: `export GH_REPO=OWNER/NAME && gh pr merge 5` is judged by the repository it names.
+- Let the session that reads a person's answer go on with the ticket: after a rail:go or an accept on a ticket that waited for a person, the run that recorded it left the ticket to the session that had claimed it, and with the label gone nothing resumed it for 30 minutes or more. A person's answer also no longer counts as a sign that the claiming session is alive.
+- List a ticket another session holds under held in next's answer also when a rail:go that answers no wait is on it.
