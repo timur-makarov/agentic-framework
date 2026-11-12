@@ -218,7 +218,9 @@ def _structured(stdout):
     meta = {}
     if isinstance(data, dict) and "structured_output" in data:
         usage = data.get("modelUsage") or {}
-        meta = {"model": next(iter(usage), None) or data.get("model"), "cost_usd": data.get("total_cost_usd")}
+        # The model that did the work: a run can also bill a small helper model, so take the costliest.
+        main = max(usage, key=lambda m: (usage[m] or {}).get("costUSD", 0), default=None) if isinstance(usage, dict) else None
+        meta = {"model": main or data.get("model"), "cost_usd": data.get("total_cost_usd")}
         data = data["structured_output"]
     elif isinstance(data, dict) and isinstance(data.get("result"), str) and "findings" not in data:
         m = re.search(r"\{.*\}", data["result"], re.S)
@@ -265,7 +267,8 @@ def run(project, f, role, receipt, disputed=None, prompt=None):
     ledger = Ledger(t.events, doc)
     prompt = prompt or brief(project, f, role, ledger, disputed)
     timeout = project.config["commands"]["timeout_secs"]
-    code, output, ms = run_shell(project.config["review"]["command"], wt, {"RAIL_TICKET": t.id}, timeout, stdin=prompt)
+    code, output, ms = run_shell(project.config["review"]["command"], wt,
+                                 {"RAIL_TICKET": t.id, **model_env(project.config["review"]["model"])}, timeout, stdin=prompt)
     gitx.git(["reset", "--quiet", "--hard", head], wt)
     gitx.git(["clean", "-fdq"], wt)
     step = role
@@ -333,6 +336,12 @@ def run(project, f, role, receipt, disputed=None, prompt=None):
     doc["runs"].append(entry)
     receipt.files[review_path(t.id)] = json.dumps(doc, indent=2) + "\n"
     return entry
+
+
+def model_env(model):
+    """[review] model and [consult] model name the model a command runs on. The claude CLI reads ANTHROPIC_MODEL;
+    another vendor's command can read RAIL_MODEL. Empty leaves the command's own default."""
+    return {"ANTHROPIC_MODEL": model, "RAIL_MODEL": model} if model else {}
 
 
 def needs_review(tier):

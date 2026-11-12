@@ -9,6 +9,7 @@ import os
 
 from . import gitx
 from .project import advice_path, event, ticket_path
+from .review import model_env
 from .util import now_iso, run_shell, tail
 
 LIMIT = 3
@@ -29,7 +30,8 @@ def ask(project, f, trigger, step, question, output, receipt):
     request = {"ticket": t.id, "trigger": trigger, "step": step, "question": question,
                "ticket_text": blobs[f"{t.ref}:{ticket_path(t.id)}"] or "", "diff": diff, "output": tail(output, 120, 12000)}
     code, out, _ = run_shell(f'"{pack(project)}"', t.worktree or project.root,
-                             {"RAIL_TICKET": t.id, "RAIL_ROOT": project.root},
+                             {"RAIL_TICKET": t.id, "RAIL_ROOT": project.root,
+                              **model_env(project.config["consult"].get("model", ""))},
                              project.config["commands"]["timeout_secs"] + 60, stdin=json.dumps(request))
     try:
         answer = json.loads(out.strip().splitlines()[-1])

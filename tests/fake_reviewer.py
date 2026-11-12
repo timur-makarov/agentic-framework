@@ -14,7 +14,8 @@ brief = sys.stdin.read()
 log = os.environ.get("RAIL_FAKE_LOG")
 if log:
     with open(log, "a") as f:
-        f.write(json.dumps({"cwd": os.getcwd(), "brief": brief, "consult": "--consult" in sys.argv}) + "\n")
+        f.write(json.dumps({"cwd": os.getcwd(), "brief": brief, "consult": "--consult" in sys.argv,
+                            "model": os.environ.get("ANTHROPIC_MODEL")}) + "\n")
 if "--consult" in sys.argv:
     print("The check expects a + b. Change the operator.\nVERDICT: change")
     sys.exit(0)
@@ -38,4 +39,6 @@ if isinstance(response, dict) and "touch" in response:
     with open("src/calc.py", "a") as f:
         f.write("# the reviewer was here\n")
 print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": "", "total_cost_usd": 0.01,
-                  "modelUsage": {"fake-model": {}}, "structured_output": response}))
+                  "modelUsage": {"a-small-helper": {"costUSD": 0.001},
+                                 os.environ.get("ANTHROPIC_MODEL") or "fake-model": {"costUSD": 0.009}},
+                  "structured_output": response}))

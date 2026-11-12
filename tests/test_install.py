@@ -148,7 +148,7 @@ class Hooks(RailTest):
         self.assertEqual(read(env_file), f'export PATH="{p.path(".rail", "bin")}:$PATH"\n')
         other = self.hook(p, "b", env_file)
         self.assertIn("No ticket is claimed by this session", other.stdout)
-        self.assertIn("Claimed by other sessions: 1.", other.stdout)
+        self.assertIn("Other sessions are at work on: 1.", other.stdout)
 
     def test_a_hook_never_fails_the_session(self):
         empty = os.path.join(self.tmp, "plain")

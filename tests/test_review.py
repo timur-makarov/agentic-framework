@@ -69,7 +69,7 @@ class Review(RailTest):
         self.assertNotEqual(doc["runs"][0]["patch_id"], doc["runs"][1]["patch_id"])
         self.assertEqual(doc["runs"][0]["model"], "fake-model")
         self.assertEqual(p.rail("advance", "1")["state"], "merged")
-        self.assertIn("| review | ran, 2 runs, 2 findings, all answered |", p.git("log", "-1", "--format=%b", "main"))
+        self.assertIn("| review | ran, 2 runs by fake-model, 2 findings, all answered |", p.git("log", "-1", "--format=%b", "main"))
 
     def test_marking_a_blocking_finding_fixed_without_a_change_needs_a_clean_rereview(self):
         p = self.fixture()

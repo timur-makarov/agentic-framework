@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from railtest import RailTest, ticket
+from railtest import CONFIG, RailTest, ticket
 
 
 def bare_log(github, branch="main"):
@@ -210,6 +210,93 @@ class Resume(RailTest):
         self.assertIn("a * b", open(os.path.join(b.worktree("1"), "src", "calc.py")).read())
         b.fix_calc("1")
         self.assertEqual(b.rail("advance", "1", session="run-2")["state"], "in-ci")
+
+
+    def test_a_shipped_ticket_is_merged_by_whichever_session_looks_next(self):
+        # A cloud run ends once its ticket ships. The next run is a new session: it must not wait for the old one.
+        a, b, github = self.github_pair()
+        a.add(ticket())
+        a.rail("next", session="run-1")
+        a.fix_calc("1")
+        a.rail("advance", "1", session="run-1")
+        waiting = b.rail("next", session="run-2")
+        self.assertEqual((waiting["ticket"], waiting["reason"]["code"]), ("1", "CI_WAIT"))  # CI isn't done: nothing to do
+        github.ci("1-fix-add", "success")
+        ready = b.rail("next", session="run-2")
+        self.assertEqual((ready["ticket"], ready["reason"]["code"], ready["action"]["command"]),
+                         ("1", "MERGE", "rail advance 1"))
+        self.assertEqual(b.rail("advance", "1", session="run-2")["state"], "merged")
+        claims = [json.loads(l) for l in subprocess.run(
+            ["git", "--git-dir", github.read()["bare"], "show", "main:.rail/journal/1-events.jsonl"],
+            capture_output=True, text=True).stdout.splitlines() if '"claimed"' in l]
+        self.assertEqual([c["session"] for c in claims], ["run-1"])  # merging took no claim
+
+    def test_another_sessions_work_in_flight_is_left_alone_while_it_keeps_moving(self):
+        a, b, github = self.github_pair()
+        a.add(ticket())
+        a.rail("next", session="run-1", env_extra={"CLAUDE_CODE_REMOTE_SESSION_ID": "cse_01abc"})
+        other = b.rail("next", session="run-2")
+        self.assertEqual(other["reason"]["code"], "NO_WORK")
+        self.assertEqual(other["held"], [{"ticket": "1", "quiet_minutes": 0,
+                                          "session": "https://claude.ai/code/session_01abc"}])
+        self.assertIn("quiet 0 min", other["action"]["brief"])
+        row = b.rail("status", session="run-2")["tickets"][0]
+        self.assertIn("another session's work", row["note"])
+        self.assertFalse(os.path.exists(b.worktree("1")))
+
+    def test_work_an_ended_session_left_is_resumed_once_it_has_gone_quiet(self):
+        # claim.stale_minutes = 0 stands in for an hour without a journal event.
+        a, b, github = self.github_pair(config=CONFIG + "\n[claim]\nstale_minutes = 0\n")
+        a.add(ticket())
+        a.rail("next", session="run-1")
+        a.write("src/calc.py", "def add(a, b):\n    return a * b\n", base=a.worktree("1"))
+        a.rail("advance", "1", session="run-1", expect=3)  # the check fails; the work is committed and pushed
+        later = b.rail("next", session="run-2")
+        self.assertEqual((later["ticket"], later["reason"]["code"]), ("1", "STEP_FAILED"))
+        self.assertIn("a * b", open(os.path.join(b.worktree("1"), "src", "calc.py")).read())
+        claims = [json.loads(l) for l in b.git("show", "1-fix-add:.rail/journal/1-events.jsonl").splitlines()
+                  if '"claimed"' in l]
+        self.assertEqual([(c["session"], c["takeover"]) for c in claims], [("run-1", False), ("run-2", True)])
+
+    def test_the_pull_request_names_the_cloud_session_and_the_reviewers_model(self):
+        a, b, github = self.github_pair(config=CONFIG.replace("[review]", '[review]\nmodel = "claude-haiku-5-5"'))
+        a.add(ticket(tier="MEDIUM"))
+        a.rail("next", env_extra={"CLAUDE_CODE_REMOTE_SESSION_ID": "cse_01abc"})
+        a.fix_calc("1")
+        a.rail("advance", "1")
+        self.assertEqual(a.briefs()[-1]["model"], "claude-haiku-5-5")  # the reviewer command ran on the model named
+        body = github.pr(1)["body"]
+        self.assertIn("| review | ran, 1 runs by claude-haiku-5-5, no findings |", body)
+        self.assertTrue(body.endswith("Tier: MEDIUM\nClaude-Session: https://claude.ai/code/session_01abc"), body)
+
+
+class Desk(RailTest):
+    def test_a_wait_is_labelled_at_once_and_its_brief_says_what_to_do_on_github(self):
+        # Live on GitHub: the HIGH ticket's contract got no rail:needs-you while the agent had other work.
+        a, b, github = self.github_pair()
+        a.add(ticket(title="Change the config", tier="HIGH", scope=("src/config/**",), check="test -f src/config/app.toml"))
+        a.add(ticket(title="Fix add"))
+        working = a.rail("next")
+        self.assertEqual((working["ticket"], working["reason"]["code"]), ("2", "IMPLEMENT"))
+        self.assertIn("rail:needs-you", github.pr(1)["labels"])
+        a.fix_calc("2")
+        a.rail("advance", "2")
+        github.ci("2-fix-add", "success")
+        a.rail("advance", "2")
+        waiting = a.rail("next")
+        self.assertEqual(waiting["reason"]["code"], "WAITING_HUMAN")
+        self.assertIn("the label rail:go approves it", waiting["waits"][0]["brief"])
+        self.assertIn("pull/1", waiting["waits"][0]["brief"])
+
+    def test_an_issue_labelled_rail_comes_in_with_the_next_rail_next(self):
+        a, b, github = self.github_pair()
+        github.update(lambda s: s["issues"].append({"number": 12, "title": "Add can't add", "body": "add(2, 3) gives -1.",
+                                                    "labels": ["rail"], "state": "open"}))
+        stub = a.rail("next")
+        self.assertEqual((stub["ticket"], stub["reason"]["code"]), ("1", "TICKET_LINT"))
+        self.assertEqual(stub["steps"][0], {"step": "intake", "status": "ran", "result": "pass",
+                                            "detail": "ticket 1 from github#12"})
+        self.assertEqual(a.rail("next")["steps"], [])  # once: the issue has its ticket now
 
 
 class Doctor(RailTest):

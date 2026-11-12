@@ -284,7 +284,9 @@ def describe(project, t, ticket, tier):
             own = [fid for fid, x in ledger.findings.items() if x.get("role") == role]
             open_ = [fid for fid in own if ledger.outcome(fid) == "open"]
             said = (f"{len(own)} findings, " + ("all answered" if not open_ else f"{len(open_)} open")) if own else "no findings"
-            rows.append(f"| {role} | ran, {len(ledger.runs(role))} runs, {said} |")
+            models = sorted({r["model"] for r in ledger.runs(role) if r.get("model")})
+            by = f" by {', '.join(models)}" if models else ""
+            rows.append(f"| {role} | ran, {len(ledger.runs(role))} runs{by}, {said} |")
     changed = project.changed_files(t.ref)
     lockfiles = [p for p in changed if os.path.basename(p) in rules.LOCKFILES]
     migrations = "No migrations." if not ticket.get("reversibility") else (
@@ -303,6 +305,9 @@ def describe(project, t, ticket, tier):
         body.append(f"Closes #{external.split('#', 1)[1]}")
     if external.startswith("sweep#"):
         body.append(f"Sweep: since {external.split('#', 1)[1]}")  # where the next sweep starts
+    sessions = [e["session_url"] for e in t.events if e.get("event") == "claimed" and e.get("session_url")]
+    if sessions:
+        body.append(f"Claude-Session: {sessions[-1]}")  # the cloud session that worked it, for a person to open
     return subject, "\n".join(body)
 
 

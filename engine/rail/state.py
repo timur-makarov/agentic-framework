@@ -5,7 +5,7 @@ import os
 from . import gitx
 from .project import NON_PRODUCT, ticket_path
 from .ticket import TIERS, Ticket, highest, lint, rank
-from .util import globs_overlap, match_any
+from .util import globs_overlap, match_any, minutes_since
 
 OPEN = ("implementing", "reviewing", "in-ci", "merge-ready")  # claimed and not finished
 SHIP_STEPS = ("rebase", "ticket-lint", "assumptions", "scope", "rules", "migration", "size", "verify", "checks")
@@ -145,6 +145,27 @@ class Facts:
     @property
     def claimed_elsewhere(self):
         return bool(self.claimed) and self.claimed.get("session") != self.project.session
+
+    @property
+    def in_flight(self):
+        """An agent is, or should be, at work on it. A shipped ticket waiting for CI or a merge has no work in
+        flight: the engine moves it, from any session."""
+        return self.state in ("implementing", "reviewing")
+
+    @property
+    def quiet_minutes(self):
+        """Minutes since the ticket's last journal event: every engine move writes one and pushes it."""
+        return minutes_since(self.t.events[-1].get("at")) if self.t.events else None
+
+    @property
+    def held(self):
+        """Another session's work in flight. Its claim holds while the ticket keeps moving: after
+        claim.stale_minutes with no event, the session is taken to have ended (a cloud VM is reclaimed, a laptop
+        closes), and the next session to look resumes the ticket."""
+        if not (self.claimed_elsewhere and self.in_flight):
+            return False
+        quiet = self.quiet_minutes
+        return quiet is None or quiet < self.project.config["claim"]["stale_minutes"]
 
     @property
     def needs_review(self):

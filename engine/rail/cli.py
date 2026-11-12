@@ -15,10 +15,10 @@ from .project import Project, event, events_path, ticket_path
 from .state import OPEN, derive, floor
 from .table import TRANSITIONS, first_match
 from .ticket import Ticket, branch_name, highest, lint, rank, with_id, with_tier
-from .util import RailError, age, match_any
+from .util import RailError, age, cloud, disposable, match_any, session_url
 
 VERBS = ("init", "add", "accept", "amend", "answer", "next", "advance", "status", "context", "drop", "doctor", "ci",
-         "consult", "docs", "intake", "sweep")
+         "consult", "docs", "intake", "sweep", "provision")
 STALE_DAYS = 3
 
 
@@ -90,7 +90,9 @@ def claim(project, t, takeover=False):
     for _ in range(3):
         ensure_local(project, t)
         before = gitx.rev(t.ref, project.root)
-        claimed = event(t.id, "claimed", session=project.session, takeover=takeover)
+        url = session_url()  # in a cloud session: the conversation a person can open from the ticket
+        claimed = event(t.id, "claimed", session=project.session, takeover=takeover,
+                        **({"session_url": url} if url else {}))
         result = project.append_events(t, [claimed], "claim" if not takeover else "take over")
         if result != "rejected":
             return True
@@ -187,6 +189,7 @@ def transition(project, f, code):
         project.append_events(t, [accepted_event(t.id, f.ticket, f.tier, "engine", "lint")], "accept")
     elif code == "CONSULT":
         from . import consult
+        ensure_local(project, t)
         last = [e for e in t.events if e.get("event") == "step" and e.get("step") == f.consult_due]
         question = (f"The step '{f.consult_due}' failed {f.attempts.get(f.consult_due)} times. What is wrong, and"
                     " should the agent proceed, change its approach, or stop and ask a person?")
@@ -569,13 +572,38 @@ def red_base_ticket(project, facts):
     return intake_one(project, facts, f"Make verify pass on {project.base} again", request, f"red-base#{red[:12]}")
 
 
+def auto_intake(project, facts):
+    """Issues labelled rail come in with every `next` when GitHub can be reached, so labelling an issue is the
+    whole act of handing work over (plan, section 6). Returns the receipts of the tickets it made."""
+    from .forge import ForgeError
+
+    if not (project.forge and project.forge.ok):
+        return []
+    try:
+        issues = project.forge.issues("rail")
+    except ForgeError:
+        return []
+    receipts = []
+    for issue in issues:
+        key = f"github#{issue['number']}"
+        nn = intake_one(project, facts, issue["title"], issue.get("body") or "", key)
+        if nn:
+            receipts.append({"step": "intake", "status": "ran", "result": "pass", "detail": f"ticket {nn} from {key}"})
+            _, facts = load(project)
+    return receipts
+
+
 def cmd_next(project, args):
     project.sync()
     task = init_task(project)
     if task:
         return task
+    task = provision_task(project)
+    if task:
+        return task
     tickets, facts = load(project)
-    if red_base_ticket(project, facts):
+    took_in = auto_intake(project, facts)
+    if took_in or red_base_ticket(project, facts):
         tickets, facts = load(project)
     leftovers = cleanup(project, tickets, facts)
     explicit = requested(project, args)
@@ -585,50 +613,65 @@ def cmd_next(project, args):
         if f is None:
             return answer(nn, None, "none", {"kind": "rest", "brief": f"Another session claimed ticket {nn} first."},
                           "CLAIMED_ELSEWHERE", receipts)
-        return from_facts(f, receipts, leftovers=leftovers)
+        return from_facts(f, took_in + receipts, leftovers=leftovers)
 
-    # Any ticket the agent can act on comes first: this session's own, then new work in ID order.
     tickets, facts = load(project)
+    # A person's inbox is the label (plan, section 10): every wait gets it now, not only when the agent runs dry.
+    for f in facts.values():
+        code, owner, _ = first_match(f)
+        if owner == "human":
+            label_wait(project, f, code)
+
+    # Any ticket the agent can act on comes first: this session's own, then tickets no session holds (shipped ones,
+    # which the engine moves from anywhere, and work an ended session left), then new work in ID order.
     mine = [f for f in facts.values() if f.state in OPEN and not f.claimed_elsewhere]
+    free = [f for f in facts.values() if f.state in OPEN and f.claimed_elsewhere and not f.held]
     fresh = [f for f in facts.values() if f.state in ("new", "accepted")]
-    for candidate in mine + fresh:
+    for candidate in mine + free + fresh:
         if first_match(candidate)[1] != "agent":
             continue
         f, receipts = settle(project, candidate.id, explicit=False)
         if f is not None and first_match(f)[1] == "agent":
-            return from_facts(f, receipts, leftovers=leftovers)
+            return from_facts(f, took_in + receipts, leftovers=leftovers)
 
     tickets, facts = load(project)
-    waits, resumable, ci = [], [], []
+    waits, held, ci = [], [], []
     for f in facts.values():
         code, owner, action = first_match(f)
         if owner == "human":
             waits.append({"ticket": f.id, "needs": code, "brief": action["brief"],
                           **({"pr": f.pr["html_url"]} if f.pr else {})})
-            label_wait(project, f, code)
         elif code == "CLAIMED_ELSEWHERE":
-            resumable.append(f.id)
+            held.append({"ticket": f.id, "quiet_minutes": f.quiet_minutes,
+                         **({"session": f.claimed["session_url"]} if f.claimed.get("session_url") else {})})
         elif code == "CI_WAIT" and f.pushed:
             ci.append(f)
-    extra = {"waits": waits, "resumable": resumable, "leftovers": leftovers}
+    extra = {"waits": waits, "resumable": [h["ticket"] for h in held], "held": held, "leftovers": leftovers}
     if ci:
         run_id = ci_run(project, ci[0])
         if run_id:
             command = f"gh run watch {run_id} --exit-status; rail next"
             return answer(ci[0].id, ci[0].state, "agent", {"kind": "script", "brief": command, "command": command},
-                          "CI_WAIT", **extra)
+                          "CI_WAIT", took_in, **extra)
     if waits:
         brief = "Tickets wait for a person:\n" + "\n".join(f"- {w['ticket']}: {w['brief']}" for w in waits)
-        return answer(owner="human", code="WAITING_HUMAN", action={"kind": "human_wait", "brief": brief}, **extra)
+        return answer(owner="human", code="WAITING_HUMAN", action={"kind": "human_wait", "brief": brief},
+                      steps_=took_in, **extra)
     from . import sweep
     is_due, _, commits = sweep.due(project)
-    if is_due:
+    if is_due and not held:
         return answer(owner="agent", code="SWEEP", action={"kind": "script", "brief": "rail sweep", "command": "rail sweep"},
-                      **extra, unreviewed=len(commits))
+                      steps_=took_in, **extra, unreviewed=len(commits))
+    if ci:
+        # CI is running and there is no run to watch (another CI system, or the run hasn't started yet).
+        return answer(ci[0].id, ci[0].state, "none", first_match(ci[0])[2], "CI_WAIT", took_in, **extra)
     brief = "No ticket to work on. New work starts with: rail add <ticket file>"
-    if resumable:
-        brief += f"\nClaimed by other sessions, resumable with rail next --ticket NN: {', '.join(resumable)}"
-    return answer(code="NO_WORK", action={"kind": "rest", "brief": brief}, **extra)
+    if held:
+        limit = project.config["claim"]["stale_minutes"]
+        brief += ("\nOther sessions are at work on: " + ", ".join(
+            f"{h['ticket']} (quiet {h['quiet_minutes']} min)" for h in held)
+            + f". A ticket quiet for {limit} min is resumed by the next rail next; rail next --ticket NN takes one now.")
+    return answer(code="NO_WORK", action={"kind": "rest", "brief": brief}, steps_=took_in, **extra)
 
 
 def label_wait(project, f, code):
@@ -782,7 +825,8 @@ def cmd_advance(project, args):
             review_stage(project, f, run)
         elif code == "MERGE" and first and project.remote and f.pr_open:
             return forge_merge(project, f, receipts)
-        elif code == "MERGE" and first and mine and not project.remote:
+        elif code == "MERGE" and first and f.worktree and not project.remote:
+            # A shipped ticket is anyone's to merge: with no remote, every session shares this clone and its worktrees.
             merged = merge_stage(project, f, run)
             receipts += run.steps
             if not merged:
@@ -841,8 +885,12 @@ def cmd_status(project, args):
         note = ""
         if owner == "human":
             note = f"waiting: {code.lower().replace('_', ' ')}"
-        elif f.state == "implementing" and not t.worktree:
-            note = "STALE: no worktree found"
+        elif f.held:
+            note = f"another session's work, quiet {f.quiet_minutes} min"
+        elif f.in_flight and f.claimed_elsewhere:
+            note = "left by an ended session: rail next resumes it"
+        elif f.in_flight and f.claimed and not t.worktree:
+            note = f"no worktree here: rail next --ticket {nn} makes one"
         elif f.state in OPEN and last and age(last).endswith("d") and int(age(last)[:-1]) >= STALE_DAYS:
             note = f"STALE: no event for {age(last)[:-1]} days"
         elif f.state in ("new", "accepted") and code in ("WAITING_AFTER", "SCOPE_OVERLAP"):
@@ -946,6 +994,80 @@ def init_task(project):
     return answer(owner="agent", code="INIT_TASK", action={"kind": "agent_task", "brief": brief}, cwd=".")
 
 
+# --- provisioning: the machine carries the tools --------------------------------------
+
+
+def _provision_marker(project):
+    """One file per project on this machine: the hash of the provision command that last ran here. It lives in the
+    home folder, so an environment's snapshot keeps it and a fresh VM starts without it."""
+    import hashlib
+    name = hashlib.sha256(project.root.encode()).hexdigest()[:16]
+    return os.path.join(os.path.expanduser("~"), ".cache", "rail", "provisioned", name)
+
+
+def provisioned(project):
+    import hashlib
+    command = project.config["commands"]["provision"]
+    if not command:
+        return True
+    path = _provision_marker(project)
+    if not os.path.exists(path):
+        return False
+    with open(path) as f:
+        return f.read().strip() == hashlib.sha256(command.encode()).hexdigest()
+
+
+def run_provision(project, run):
+    """Run [commands] provision as root, and note that it ran. Returns whether it passed."""
+    import hashlib
+    import shlex
+
+    command = project.config["commands"]["provision"]
+    as_root = command if os.geteuid() == 0 else f"sudo -n -E sh -c {shlex.quote(command)}"  # a CI runner isn't root
+    code, output, ms = steps.run_shell(as_root, project.root, {"RAIL_BASE": project.base_ref},
+                                       project.config["commands"]["timeout_secs"])
+    passed = run.record("provision", code == 0, None, "timeout" if code is None else f"exit {code}", ms,
+                        output=f"$ {command}\n{steps.tail(output)}")
+    if passed:
+        path = _provision_marker(project)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(hashlib.sha256(command.encode()).hexdigest() + "\n")
+    return passed
+
+
+def provision_task(project):
+    """In a cloud session, the first `next` on a machine that hasn't been provisioned says so (plan, section 14)."""
+    if not cloud() or provisioned(project):
+        return None
+    return answer(owner="agent", code="PROVISION", cwd=".",
+                  action={"kind": "script", "brief": "rail provision", "command": "rail provision"})
+
+
+def cmd_provision(project, args):
+    """Install what setup and verify need that the machine lacks: [commands] provision, once per machine. It runs
+    on machines made for the work, a cloud session's VM and a CI runner. A person's own machine is theirs."""
+    command = project.config["commands"]["provision"]
+    if not command:
+        return answer(code="NO_WORK", action={"kind": "rest", "brief": "No provision command is set ([commands]"
+                                                                       " provision in .rail/config.toml)."})
+    if not disposable():
+        brief = ("This is your own machine, so Rail installs nothing here. In a cloud session and in CI it runs:\n"
+                 f"  {command}\nInstall the same tools your own way; rail doctor says what verify still misses.")
+        return answer(owner="human", code="PROVISION_LOCAL", action={"kind": "human_wait", "brief": brief})
+    if provisioned(project) and not args.force:
+        return answer(code="PROVISIONED", action={"kind": "rest", "brief": "This machine is provisioned already;"
+                                                                           " rail provision --force runs it again."})
+    run = steps.Run(project, type("T", (), {"id": ""})())
+    passed = run_provision(project, run)
+    brief = ("Provisioned. Next: rail next" if passed else
+             f"The provision command failed:\n{run.failure[1]}\n\nFix [commands] provision in .rail/config.toml (a"
+             " HIGH ticket), or the machine, then run: rail provision")
+    return answer(owner="agent", code="PROVISIONED" if passed else "PROVISION_FAILED", steps_=run.steps, cwd=".",
+                  action={"kind": "script" if passed else "agent_task", "brief": brief,
+                          **({"command": "rail next"} if passed else {})})
+
+
 def cmd_docs(args):
     from . import docs
 
@@ -978,6 +1100,11 @@ def cmd_ci(project, args):
     text = gitx.read_blobs([f"{head}:{ticket_path(nn)}"], project.root).get(f"{head}:{ticket_path(nn)}") if nn else None
     run = steps.Run(project, type("T", (), {"id": nn or ""})())
     changed = project.changed_files(head)
+    if disposable() and project.config["commands"]["provision"] and not provisioned(project):
+        # The runner is made for this run, like a cloud VM: it gets the same tools before any check needs them.
+        if not run_provision(project, run):
+            return answer(nn, code="CI_FAIL", action={"kind": "rest", "brief": f"Failed at 'provision':\n{run.failure[1]}"},
+                          steps_=run.steps)
     if text is None:
         # A PR with no ticket: the rail init PR, Dependabot, a person's own PR.
         tier, _ = raised_tier(project, changed)
@@ -1104,6 +1231,9 @@ def parser():
     intake.add_argument("--title")
     intake.add_argument("--brief", help="a file with the request, verbatim")
     verb("sweep", "review what merged without a review, and turn its findings into tickets", ticket=False)
+    provision = verb("provision", "install what the checks need on this machine (cloud sessions and CI only)",
+                     ticket=False)
+    provision.add_argument("--force", action="store_true", help="run it again on a machine that has it")
     verb("init", "set this project up for Rail", ticket=False)
     verb("doctor", "check the setup and print what's missing", ticket=False)
     verb("ci", "the rail check: the ship checks again on a pull request's head", ticket=False)

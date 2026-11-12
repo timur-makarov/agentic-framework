@@ -251,10 +251,10 @@ class RailTest(unittest.TestCase):
     def fixture(self, name="proj", **kw):
         return Fixture(os.path.join(self.tmp, name), **kw)
 
-    def github_pair(self):
+    def github_pair(self, **kw):
         """Two clones of a repository on the fake GitHub: git reaches the bare remote through insteadOf, and gh is the
         fake. Returns (a, b, github)."""
-        a, b = self.remote_pair()
+        a, b = self.remote_pair(**kw)
         bare = os.path.join(self.tmp, "remote.git")
         github = GitHub(self.tmp, bare)
         for fx in (a, b):
@@ -263,9 +263,9 @@ class RailTest(unittest.TestCase):
             fx.github = github
         return a, b, github
 
-    def remote_pair(self):
+    def remote_pair(self, **kw):
         """A bare remote and two clones of it: a laptop and a cloud run."""
-        seed = self.fixture("seed")
+        seed = self.fixture("seed", **kw)
         bare = os.path.join(self.tmp, "remote.git")
         seed.git("clone", "--quiet", "--bare", seed.root, bare, cwd=self.tmp)
         return Fixture(os.path.join(self.tmp, "a"), remote=bare), Fixture(os.path.join(self.tmp, "b"), remote=bare)

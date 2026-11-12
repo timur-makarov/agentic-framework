@@ -40,12 +40,12 @@ def session_start():
             "Done Contract:", f.ticket.sections.get("Done Contract", ""),
             f"scope_paths: {', '.join(f.ticket.scope)}",
         ]
-    others = [f.id for f in facts.values() if f.state in OPEN and f.claimed_elsewhere]
+    others = [f.id for f in facts.values() if f.held]
     if not mine:
         lines.append("No ticket is claimed by this session. Run rail next --json.")
     if others:
-        lines.append(f"Claimed by other sessions: {', '.join(others)}. Take one over only when its session has ended:"
-                     " rail next --ticket NN.")
+        lines.append(f"Other sessions are at work on: {', '.join(others)}. rail next resumes one by itself once it has"
+                     " been quiet long enough; rail next --ticket NN takes it over now.")
     print("\n".join(lines))
     return 0
 

@@ -177,7 +177,7 @@ class Ship(RailTest):
         p.fix_calc("1")
         p.rail("advance", "1", session="a")
         p.add(ticket(title="Rewrite add"))
-        p.rail("next", session="b")
+        p.rail("next", "--ticket", "2", session="b")  # a bare next would merge ticket 1 first: it is shipped
         p.write("src/calc.py", "def add(a, b):\n    return sum((a, b))\n", base=p.worktree("2"))
         p.rail("advance", "2", session="b")
         p.rail("advance", "1", session="a")
