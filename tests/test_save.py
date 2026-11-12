@@ -70,6 +70,29 @@ class Save(RailTest):
         self.assertEqual(a.git("ls-tree", "-r", "--name-only", "origin/1-fix-add", "src/").split(), ["src/calc.py"])
         self.assertEqual(events(a)[-1]["event"], "saved")
 
+    def test_a_save_leaves_out_files_whose_names_say_they_hold_secrets(self):
+        # A save is pushed before verify, where the project's secret scan runs.
+        a, b = self.remote_pair()
+        a.add(ticket())
+        a.rail("next")
+        tree = a.worktree("1")
+        a.write("src/calc.py", HALF_DONE, base=tree)
+        for name in ("src/.env", "src/.env.local", "src/deploy.pem", "src/server.key", "src/id_rsa"):
+            a.write(name, "SECRET\n", base=tree)
+        a.write("src/.env.example", "KEY=\n", base=tree)
+        saved = a.rail("save")
+        self.assertEqual(saved["steps"][0]["detail"], "ticket 1: 2 files")
+        self.assertIn("their names say they hold secrets: src/.env, src/.env.local, src/deploy.pem, src/id_rsa, src/server.key",
+                      saved["action"]["brief"])
+        a.git("fetch", "--quiet")
+        pushed = a.git("ls-tree", "-r", "--name-only", "origin/1-fix-add", "src/").split()
+        self.assertEqual(sorted(pushed), ["src/.env.example", "src/calc.py"])
+        self.assertIn("src/deploy.pem", a.git("status", "--porcelain", cwd=tree))  # still there, for the ship to judge
+        self.assertEqual(hook(a, "stop").returncode, 0)
+        a.git("fetch", "--quiet")
+        self.assertEqual(sorted(a.git("ls-tree", "-r", "--name-only", "origin/1-fix-add", "src/").split()),
+                         ["src/.env.example", "src/calc.py"])
+
     def test_a_save_that_fails_in_a_hook_is_told_to_the_agent(self):
         a, b = self.remote_pair()
         a.add(ticket())
@@ -249,6 +272,21 @@ class MergedContract(RailTest):
         self.assertEqual((on["ticket"], on["reason"]["code"]), ("1", "IMPLEMENT"))
         self.assertEqual(github.pr(2)["state"], "open")
         self.assertTrue(os.path.exists(os.path.join(b.worktree("1"), ".rail", "tickets", "1.md")))
+
+    def test_a_ticket_file_that_came_in_with_another_merge_is_nobodys_approval(self):
+        # Only the ticket's own merged pull request shows a person merged its contract. A HIGH ticket's file that
+        # reaches the base branch inside another ticket's merge has no pull request of its own.
+        a, b, github = self.github_pair()
+        smuggled = ticket(**self.HIGH).replace("+++\n", '+++\nid = "99"\n', 1)
+        a.write(".rail/tickets/99.md", smuggled)
+        a.git("add", ".rail/tickets/99.md")
+        a.git("commit", "--quiet", "-m", "1: Fix add (#7)\n\nTicket: 1\nTier: LOW")
+        a.git("push", "--quiet", "origin", "main")
+        for fx in (a, b):
+            told = fx.rail("next")
+            self.assertEqual(told["reason"]["code"], "NO_WORK", told)
+            self.assertEqual([t["state"] for t in fx.rail("status")["tickets"] if t["ticket"] == "99"], ["dropped"])
+            self.assertEqual(fx.git("branch", "--all", "--list", "*99-*").strip(), "")  # nothing was claimed or accepted
 
     def test_a_drop_holds_after_the_tickets_branch_is_gone(self):
         # The contract reached the base branch by the merge. Dropped, and its branch deleted, the ticket must not

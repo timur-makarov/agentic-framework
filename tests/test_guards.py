@@ -184,12 +184,41 @@ class Deny(RailTest):
                         # Words that only look like another repository.
                         "gh pr merge 5 --body /repos/a/b/", "gh api -X PUT repos/{owner}/{repo}/pulls/5/merge",
                         "gh api -X PUT repos/:owner/:repo/pulls/5/merge", "gh pr merge 5 -R github.com/acme/app",
-                        "gh api -X PUT -H 'X: repos/a/b/' repos/acme/app/pulls/5/merge"):
+                        "gh api -X PUT -H 'X: repos/a/b/' repos/acme/app/pulls/5/merge",
+                        # Another repository's URL in a message names nothing: the merge is still this project's.
+                        'gh pr merge 5 --body "see github.com/other/repo"',
+                        "gh pr merge 5 --subject https://github.com/other/repo/pull/9",
+                        "gh api -X PUT repos/{owner}/{repo}/pulls/5/merge -f commit_message=https://github.com/other/repo/issues/1",
+                        "gh api -X PUT https://api.github.com/repos/acme/app/pulls/5/merge",
+                        "gh pr merge --squash https://github.com/acme/app/pull/5",
+                        "gh pr -R acme/app merge 5", f"cd {other} && gh pr --repo acme/app merge 5",
+                        f"cd {other} && export GIT_DIR={a.root}/.git && git push origin main"):
             self.assertEqual(decide(a, command), "deny", command)
         for command in ("gh api -X PUT repos/someone/else/pulls/3/merge-async", "gh pr merge 3 -R someone/else",
-                        f"cd {other} && gh pr merge 4 --squash",
+                        f"cd {other} && gh pr merge 4 --squash", "gh pr -R someone/else merge 3",
+                        "gh pr merge https://github.com/someone/else/pull/3",
+                        "gh api -X PUT https://api.github.com/repos/someone/else/pulls/3/merge",
                         f"cd {other} && gh api -X PUT repos/{{owner}}/{{repo}}/pulls/5/merge"):
             self.assertIsNone(decide(a, command), command)
+
+    def test_the_guard_reads_command_lines_as_the_shell_does(self):
+        p = self.fixture()
+        # A message that mentions a command is not that command: a newline inside quotes ends no line, and a
+        # here-document's body is data.
+        for command in ('git commit -q -m "Guard wrapped commands\n\ntimeout 60 git push -f origin main was not judged."',
+                        "git commit -m \"$(cat <<'MSG'\nFix the guard\n\ngit push --force origin main is denied now\nMSG\n)\"",
+                        "gh pr create --title Guard --body \"$(cat <<'BODY'\n## What\ngh pr merge 5 is denied.\nBODY\n)\"",
+                        "cat > notes.md <<EOF\ngit push -f origin main\nEOF", "cat <<-'EOF' > notes.md\n\tgh pr merge 5\n\tEOF",
+                        "echo '$(git push -f origin main)'", "echo 'it`s\ngit push -f origin main'"):
+            self.assertIsNone(decide(p, command, cloud=True), command)
+        # What the shell does run: a continued line, a here-document handed to a shell, a substitution, and the
+        # lines after something that only looks like a here-document.
+        for command in ("git push \\\n  --force origin 7-work", "bash <<EOF\ngit push -f origin main\nEOF",
+                        "cat <<EOF | sudo bash\ngh pr merge 5\nEOF", "echo $((1<<2))\ngit push -f origin main",
+                        "echo $(git push -f origin main)", "echo `git push origin HEAD:main`",
+                        'git commit -m "fix: $(git push -f origin main)"', 'echo "left open $(git push -f origin main',
+                        "echo start\ngit push --force origin main", "echo \"a\nb\"\ngh pr merge 5"):
+            self.assertEqual(decide(p, command, cloud=True), "deny", command)
 
     def test_the_owners_decision_on_a_finding_always_asks(self):
         # The flag first, or rail by path, would dodge a permission rule; an abbreviation would dodge both.

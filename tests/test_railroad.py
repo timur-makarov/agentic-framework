@@ -96,6 +96,30 @@ class Ship(RailTest):
         self.assertEqual(p.git("log", "-1", "--format=%s", "1-fix-add").strip(), "1: ship failed")
         self.assertIn("api/handlers.py", p.git("status", "--porcelain", cwd=p.worktree("1")))
 
+    def test_a_tickets_branch_carries_no_other_tickets_file(self):
+        # New tickets come in through rail add, each on its own branch with its own approval. A ticket file written
+        # into another ticket's branch would reach the base branch with that ticket's merge.
+        p = self.fixture()
+        p.add(ticket())
+        p.rail("next")
+        p.fix_calc("1")
+        tree = p.worktree("1")
+        p.write(".rail/tickets/99.md", ticket(title="Change the engine", tier="HIGH", scope=(".rail/engine/**",)), base=tree)
+        failed = p.rail("advance", "1", expect=3)
+        self.assertEqual(failed_step(failed)[0], "scope")
+        self.assertIn(".rail/tickets/99.md", failed_step(failed)[1])
+        # Committed by hand, it is found on the branch all the same.
+        p.git("add", "-A", cwd=tree)
+        p.git("commit", "--quiet", "-m", "1: by hand", cwd=tree)
+        failed = p.rail("advance", "1", expect=3)
+        self.assertIn(("scope", "fail", "outside scope: .rail/tickets/99.md"),
+                      [(s["step"], s.get("result"), s.get("detail")) for s in failed["steps"]])
+        # The ticket's own file is its own to change, and a ticket may name other files there in scope_paths.
+        p.git("rm", "--quiet", ".rail/tickets/99.md", cwd=tree)
+        p.git("commit", "--quiet", "-m", "1: undo", cwd=tree)
+        p.write(".rail/tickets/1.md", read(os.path.join(tree, ".rail/tickets/1.md")) + "\n## Look at\nThe sum.\n", base=tree)
+        self.assertEqual(p.rail("advance", "1")["state"], "merge-ready")  # it shipped: the scope check passed
+
     def test_non_ascii_paths_are_in_scope(self):
         p = self.fixture(files={"café/menu.md": "# Menu\n",
                                 "ARCHITECTURE.md": ARCHITECTURE + "| menu | café/** | the menu |\n"})
