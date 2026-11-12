@@ -5,15 +5,22 @@ Code cloud session, where `gh pr` and `gh issue` (GraphQL) don't work.
 
 ## One-time setup
 
-`rail init` creates the labels `rail`, `rail:go` and `rail:needs-you`. Then, in the repository's settings:
+`rail init` creates the labels `rail`, `rail:go` and `rail:needs-you`, and writes `.rail/ruleset.json`.
+The rest is yours, in the repository's settings; a cloud session can't change them:
 
-- Make `rail` a required check on the base branch (a ruleset or branch protection).
-- Allow squash merging only, with "Pull request title and description" as the default message, so a
-  person's merge puts the same `Ticket:` trailer on the base branch as the engine's.
-- Turn on "Automatically delete head branches".
+- **Settings > Rules > Rulesets > New ruleset > Import a ruleset:** choose `.rail/ruleset.json`. It makes
+  `rail` a required check on the base branch, requires a pull request and an up-to-date branch, allows
+  squash merges only, and blocks force pushes and deletion. To make it by hand: a branch ruleset, active,
+  on the default branch, with "Require a pull request before merging" (0 approvals, squash only) and
+  "Require status checks to pass" (`rail`, with "Require branches to be up to date").
+- **Settings > General > Pull Requests:** allow squash merging only, with "Pull request title and
+  description" as the default message, so a person's merge puts the same `Ticket:` trailer on the base
+  branch as the engine's.
+- **The same page:** turn on "Automatically delete head branches".
 - Turn on Dependabot or Renovate.
 
-`rail doctor` checks the required check, the squash setting and the labels.
+`rail doctor` checks the required check, the squash setting, branch deletion and the labels, with a link to
+each page.
 
 ## How tickets use pull requests
 

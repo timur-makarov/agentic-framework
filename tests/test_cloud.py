@@ -73,6 +73,33 @@ class Provision(RailTest):
         self.assertEqual((ci["reason"]["code"], ci["steps"][0]["step"]), ("CI_FAIL", "provision"))
 
 
+class Doctor(RailTest):
+    def test_in_a_cloud_session_doctor_says_what_the_environment_still_needs(self):
+        p = self.fixture(config=CONFIG.replace("[commands]", '[commands]\nprovision = "true"'))
+        vm = {"HOME": os.path.join(self.tmp, "vm-home")}
+        os.makedirs(vm["HOME"])
+        local = {s["step"] for s in p.rail("doctor", expect=None, env_extra=vm)["steps"]}
+        self.assertFalse({"cloud", "provision", "environment"} & local)  # a person's machine: none of it applies
+
+        found = {s["step"]: s for s in p.rail("doctor", expect=None, cloud=True, env_extra=vm)["steps"]}
+        self.assertEqual(found["cloud"]["result"], "pass")
+        self.assertEqual(found["provision"]["result"], "fail")
+        self.assertIn("rail provision", found["provision"]["detail"])
+        self.assertEqual(found["environment"]["result"], "fail")
+        self.assertIn('ln -sf "$PWD/$d.rail/bin/rail" /usr/local/bin/rail', found["environment"]["detail"])
+        self.assertIn("RAIL_CLOUD=1 .rail/bin/rail provision", found["environment"]["detail"])
+        # No hook ran for this session id: a session with several repositories, or a project thread.
+        self.assertEqual(found["session hooks"]["status"], "unavailable")
+
+        p.rail("provision", cloud=True, env_extra=vm)
+        hook = {"hook_event_name": "SessionStart", "session_id": "session-a", "cwd": p.root}
+        import subprocess
+        subprocess.run([p.path(".rail", "bin", "rail"), "hook", "session-start"], input=json.dumps(hook), text=True,
+                       capture_output=True, cwd=p.root, check=True)
+        found = {s["step"]: s for s in p.rail("doctor", expect=None, cloud=True, env_extra=vm)["steps"]}
+        self.assertEqual((found["provision"]["result"], found["session hooks"]["result"]), ("pass", "pass"))
+
+
 if __name__ == "__main__":
     import unittest
     unittest.main()

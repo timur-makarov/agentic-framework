@@ -19,8 +19,12 @@ rail next --json -> do action.brief -> rail advance --json -> repeat
 
 `next` makes some moves itself: it accepts a ticket whose tier is in `auto_tiers`, claims a ticket, makes
 its worktree in `.claude/worktrees/NN`, copies the files `.worktreeinclude` lists, and runs `setup` there.
-It prefers this session's own tickets, then new work in ID order. A ticket another session claimed is
-listed as resumable; `rail next --ticket NN` takes it over after that session ends.
+It prefers this session's own tickets; then tickets no session holds (a shipped ticket, which any session
+may move through CI and the merge, and work an ended session left); then new work in ID order. A ticket
+another session is implementing or reviewing is left alone while it keeps moving. After
+`[claim] stale_minutes` (60) with no journal event, the next `rail next` resumes it, and
+`rail next --ticket NN` takes it over at once. With GitHub reachable, `next` also takes in issues labelled
+`rail` and labels every wait `rail:needs-you`.
 
 ## What advance does
 

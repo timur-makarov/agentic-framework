@@ -172,7 +172,7 @@ One file per ticket. The engine appends one entry per run.
 |---|---|---|---|
 | `accepted` | Ticket lint first passes on an auto tier; a person approves with the label or `accept`; an `amend` takes effect | `by` (`engine`, `person`), `via` (`lint`, `label`, `accept`, `amend`), `tier`, `contract`, `note` | The `accepted` state. Ship and CI compare `contract` and `tier` with the ticket: that is the freeze |
 | `amended` | `amend NN` | `contract` (the new hash), `changed` (any of `done_contract`, `scope`, `tier`), `added_paths`, `needs_approval` | The PR's Risk section. When `needs_approval` is true, the ticket waits until a later `accepted` |
-| `claimed` | A claim or a takeover inside `next` | `session` (`CLAUDE_CODE_SESSION_ID`, or null), `takeover` | The `implementing` state; `next` and the snapshot find this session's ticket |
+| `claimed` | A claim or a takeover inside `next` | `session` (`CLAUDE_CODE_SESSION_ID`, or null), `takeover`, and in a cloud session `session_url` (the session's page) | The `implementing` state; `next` and the snapshot find this session's ticket; the PR description ends with the last `session_url` |
 | `step` | Every step the engine runs (table below) | `step`, `status` (`ran`, `not_run`, `unavailable`), `result` (`pass`, `fail`), `patch_id`, `counted`, `detail`, `duration_ms`, `cost_usd` | The retry budget, the PR's Evidence table, later measurement |
 | `shipped` | Every ship step passed for the current patch | `patch_id`, `head`, `tier`, `size` | CI's `not shipped yet` test; the `reviewing` and `in-ci` states |
 | `tier_raised` | Ship raises the tier | `from`, `to`, `reason` (`size`, `risk_paths`, `migration_paths`), `detail` | The PR's Risk section |
@@ -232,7 +232,7 @@ One file per ticket. The engine appends one entry per run.
 | `in-ci` | A `shipped` event and a complete review for the current patch. From the forge: checks still running |
 | `merge-ready` | From the forge: checks green on the head. No finding open |
 | `merged` | From git: a squash commit with `Ticket: NN` on base |
-| `dropped` | A `dropped` event. Or the PR is closed unmerged. Or the `rail/id/NN` branch exists with no ticket branch and no merge |
+| `dropped` | A `dropped` event. Or the PR is closed unmerged. Or the ID is in the counter branch `rail/ids` (or, in an older project, a `rail/id/NN` branch exists) with no ticket branch and no merge |
 
 **A wait has no event of its own.** Each is derived, so `status`, the `notify` hook and the label all read the same facts:
 
@@ -259,4 +259,6 @@ The plan leaves these open, so each is a choice made here:
 4. **`open` is an outcome,** written by the engine. The events file alone then says whether every finding is answered.
 5. **The retry budget counts failures since the step last passed.** The plan says "attempts per step" and doesn't say whether a pass resets the count.
 6. **Waits are derived, not logged.** The one exception is `continued`, which resets the budget and carries the person's note.
-7. **A dropped ticket's journal goes with its branch.** Only the ticket file stays reachable, through the `rail/id/NN` branch.
+7. **A dropped ticket's journal goes with its branch.** Its ID and the title it was added with stay in the counter branch `rail/ids`.
+8. **A claim's age is read from the journal.** The last event's `at` is the ticket's last move. Another session's `implementing` or `reviewing` ticket whose last event is older than `[claim] stale_minutes` is resumed by `next`; a shipped ticket needs no claim to be moved (PLAN section 6).
+9. **A review run stores the model that answered** as `model`: the costliest entry of the CLI's `modelUsage`, since a run may also bill a small helper model.

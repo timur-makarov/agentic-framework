@@ -123,3 +123,20 @@ These were first applied to the plan as recommendations.
      - Phase 1 reports forge states `unavailable`;
      - the CD issue starts with `Commit: <sha>`;
      - `drop` is safe to rerun and cleans up after a PR closed by hand.
+
+## Approved by the owner on 2026-11-12
+
+After the framework was built through Phase 6 and run on real GitHub, the owner set a new direction: the cloud first.
+
+1. **Claude Code cloud sessions are the standard setup.** The framework takes what it needs from the cloud machine, and a person's own machine keeps the rules that protect it. This replaces "the standard setup is clone plus Claude Code" and makes the one exception to "no decision is based on a host" (PLAN section 26).
+2. **Approved as recommended, and built:**
+   - setup that does itself in the cloud, ending in one pull request;
+   - the environment's setup script carries the tools, through `[commands] provision`;
+   - GitHub's ruleset is the guard, the machine-protecting asks step aside in the cloud, and the sandbox setting is for a person's machine;
+   - fresh sessions carry the work: a scheduled task, intake inside `next`, and claims that protect only work in flight;
+   - one counter branch for ticket IDs in place of a branch per ID.
+3. **Auto mode:** the agent's own verbs are allowed by permission rule, so neither a prompt nor the classifier stops the loop. The classifier's own rule lists are left alone.
+4. **The reviewer's model is a config field.** No second model vendor for now.
+5. **Tracker integrations come later.**
+6. **Left to the owner on GitHub,** because a cloud session can't change repository settings: the ruleset, squash-only merging, and deleting merged branches.
+

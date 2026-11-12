@@ -87,8 +87,8 @@ def doctor_checks(project, repo):
     message = info.get("squash_merge_commit_title") == "PR_TITLE" and info.get("squash_merge_commit_message") == "PR_BODY"
     found.append(("squash merging", bool(squash_only and message),
                   "squash only, with the PR title and description" if squash_only and message else
-                  "in Settings > General > Pull Requests allow squash merging only, with 'Pull request title and "
-                  "description' as the default message"))
+                  f"at https://github.com/{repo}/settings (General > Pull Requests) allow squash merging only, with"
+                  " 'Pull request title and description' as the default message"))
     base = project.base
     contexts, plan_limit = set(), False
     try:
@@ -111,7 +111,13 @@ def doctor_checks(project, repo):
     else:
         found.append(("required check", "rail" in contexts,
                       f"rail is required on {base}" if "rail" in contexts else
-                      f"make the rail check required on {base} (a ruleset or branch protection)"))
+                      f"make the rail check required on {base}: import .rail/ruleset.json at"
+                      f" https://github.com/{repo}/settings/rules (New ruleset > Import a ruleset). Only a person can:"
+                      " a cloud session can't change repository settings"))
+    deletes = bool(info.get("delete_branch_on_merge"))
+    found.append(("merged branches", deletes, "GitHub deletes a merged ticket's branch" if deletes else
+                  f"turn on \"Automatically delete head branches\" at https://github.com/{repo}/settings (General >"
+                  " Pull Requests): a cloud session can't delete branches, so merged ones would pile up"))
     try:
         names = {label["name"] for label in api("GET", f"repos/{repo}/labels?per_page=100") or []}
     except ForgeError as e:

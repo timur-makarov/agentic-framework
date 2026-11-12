@@ -307,10 +307,16 @@ class Doctor(RailTest):
         self.assertEqual(found["squash merging"]["result"], "fail")
         self.assertEqual(found["required check"]["result"], "pass")
         self.assertEqual(found["labels"]["result"], "fail")
+        self.assertEqual(found["merged branches"]["result"], "fail")
+        self.assertIn("Automatically delete head branches", found["merged branches"]["detail"])
         github.update(lambda s: s.update(settings={"allow_squash_merge": True, "allow_merge_commit": False,
                                                    "allow_rebase_merge": False, "squash_merge_commit_title": "PR_TITLE",
-                                                   "squash_merge_commit_message": "PR_BODY"},
+                                                   "squash_merge_commit_message": "PR_BODY",
+                                                   "delete_branch_on_merge": True},
                                          labels=["rail", "rail:go", "rail:needs-you"]))
         found = {s["step"]: s for s in a.rail("doctor", expect=None)["steps"]}
-        for name in ("squash merging", "required check", "labels"):
+        for name in ("squash merging", "required check", "labels", "merged branches"):
             self.assertEqual(found[name]["result"], "pass", found[name])
+        github.update(lambda s: s.__setitem__("required", []))
+        missing = {s["step"]: s for s in a.rail("doctor", expect=3)["steps"]}["required check"]
+        self.assertIn("import .rail/ruleset.json at https://github.com/acme/app/settings/rules", missing["detail"])

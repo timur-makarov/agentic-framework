@@ -7,6 +7,17 @@ import shutil
 import subprocess
 
 from . import gitx
+from .util import cloud
+
+# The cloud environment's setup script: it runs as root before each new machine's first session, from the folder
+# that holds the repositories, and its result is kept as the environment's snapshot. The link gives every session
+# `rail`, also where no repository hook runs (a session with several repositories, a project thread).
+ENVIRONMENT_SCRIPT = """for d in */; do
+  if [ -x "$d.rail/bin/rail" ]; then
+    ln -sf "$PWD/$d.rail/bin/rail" /usr/local/bin/rail
+    (cd "$d" && RAIL_CLOUD=1 .rail/bin/rail provision) || true
+  fi
+done"""
 
 
 def _run(args, cwd):
@@ -78,6 +89,9 @@ def checks(project):
 
     found.append(("config", True, ".rail/config.toml is valid"))  # Project() failed otherwise
 
+    if cloud():
+        found += cloud_checks(project)
+
     if project.remote:
         from . import forge
         repo = forge.github_repo(project)
@@ -86,6 +100,31 @@ def checks(project):
         else:
             for name, passed, detail in forge.doctor_checks(project, repo):
                 found.append((name, passed, detail))
+    return found
+
+
+def cloud_checks(project):
+    """What a Claude Code cloud session needs beyond the repository (plan, section 26)."""
+    from .cli import provisioned
+
+    found = [("cloud", True, "a Claude Code cloud session: Rail installs what the checks need here")]
+    if project.config["commands"]["provision"]:
+        done = provisioned(project)
+        found.append(("provision", done, "this machine has what [commands] provision installs" if done
+                      else "this machine isn't provisioned: run rail provision"))
+    launcher = os.path.realpath(os.path.join(project.root, ".rail", "bin", "rail"))
+    linked = os.path.realpath("/usr/local/bin/rail") == launcher
+    found.append(("environment", linked, "the environment's setup script put rail on PATH" if linked else
+                  "add these lines to the cloud environment's setup script (your agent can propose them with its"
+                  " environment tool; you approve once). They give every session rail and the provisioned tools,"
+                  " also where no repository hook runs:\n" + ENVIRONMENT_SCRIPT))
+    session = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if session:
+        loaded = bool(project.cache_read("hooks", session))
+        found.append(("session hooks", True if loaded else None,
+                      "Rail's hooks run in this session" if loaded else
+                      "Rail's hooks didn't run in this session (it holds several repositories, or is a project"
+                      " thread), so the guard and the allow rules aren't active here: GitHub's ruleset is the guard"))
     return found
 
 

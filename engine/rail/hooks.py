@@ -31,6 +31,8 @@ def session_start():
         with open(env_file, "a") as f:
             f.write(f'export PATH="{os.path.join(project.root, ".rail", "bin")}:$PATH"\n')
     project.session = data.get("session_id") or project.session
+    if project.session:
+        project.cache_write("hooks", project.session, "1")  # doctor reads it: Rail's hooks run in this session
     lines = ["This repository runs on Rail. The loop: rail next --json, do action.brief, then rail advance --json."]
     tickets, facts = load(project)
     mine = [f for f in facts.values() if f.state in OPEN and f.claimed and not f.claimed_elsewhere]

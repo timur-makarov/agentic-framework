@@ -11,12 +11,12 @@ The CLI is `rail`. A person sets a project up with `rail init` (section 14).
 - **Scope:**
   - The lens; not a product.
   - No attacks.
-  - The standard setup is clone plus Claude Code.
+  - The standard setup is a Claude Code cloud session on the project's repository (2026-11-12, section 26). A clone on a person's own machine stays supported.
   - Build for git, GitHub and Claude Code only, for now (2026-11-10). Other popular tools, such as other trackers, forges, CI systems and hosts, must stay possible to add later through the CLI surface (section 19), but none is designed now. The framework stays a railroad a project can change and extend.
   - macOS and Linux only.
   - No license.
   - No support for old versions.
-  - No decision is based on a host.
+  - No decision is based on a host, with one exception since 2026-11-12: Claude Code's cloud sessions are the standard setup, and section 26 says what the engine does differently there.
   - The necessity test applies to every item.
   - Token cost is not a concern.
 - **Engine and config:** Python 3.11+ with `tomllib` and TOML config.
@@ -140,6 +140,8 @@ setup  = "pnpm install"                   # after each worktree is made
 verify = "pnpm test && pnpm lint && gitleaks git --log-opts=origin/main..HEAD"
                                           # whole project, at ship and in CI; scanners and generators go here too.
                                           # A monorepo makes it affected-aware with its own tools (turbo, nx, make)
+provision = "apt-get install -y gitleaks" # once per machine, as root, in a cloud session and on a CI runner (section 26);
+                                          # never run on a person's own computer
 timeout_secs = 900                        # per command: setup, verify, each check, each review run
 
 [risk_paths]                              # floors for the tier, matched against scope_paths at add; proposed by the init task
@@ -155,14 +157,20 @@ exclude = []                              # extra globs; generated files and loc
 # runs in the ticket's worktree with the brief on stdin; the engine resets the worktree afterwards
 # the command runs through sh; --json-schema takes the schema's text, not a path
 command = '''claude -p --safe-mode --system-prompt-file .rail/engine/reviewer.md --tools Read,Grep,Glob,Bash,Edit,Write --allowedTools Bash,Edit,Write --disallowedTools 'Bash(git push *)' --output-format json --json-schema "$(cat .rail/engine/review-v1.json)"'''
+model = ""                                # the model the reviewer runs on; the engine sets ANTHROPIC_MODEL and RAIL_MODEL
+                                          # for the command. Empty is the command's own default
 
 [retry]
 budget = 2                                # attempts per step; then consult, then a person
+
+[claim]
+stale_minutes = 60                        # another session's work with no journal event for this long is resumed (section 6)
 
 [consult]                                 # reader: the consult pack (section 18)
 command = "claude -p --safe-mode --tools Read,Grep,Glob"
                                           # read-only, with the brief on stdin. Point it at another vendor's CLI when you
                                           # have one; a consult by the author's own model is labelled same-model
+model = ""                                # the model consult runs on, set like review.model
 
 [sweep]
 after = 20                                # LOW tickets and ticketless commits since the last sweep
@@ -227,10 +235,10 @@ Refresh tokens can be replayed after use.
 **A ticket exists as its branch.**
 
 - `add` takes the next ID and creates branch `NN-slug` (with the external id in it when there is one). It commits the ticket file there without touching the current worktree, and pushes when there is a remote.
-- **The next ID** is one more than the highest ticket ID found in `rail/id/NN` branches, on base and in ticket branches.
+- **The next ID** is one more than the highest ticket ID found in the counter branch `rail/ids`, on base and in ticket branches.
 - This works the same when tickets are created in the middle of other work: by the sweep, by `intake`, or from a failed dev deploy reported as an issue.
 - **IDs and claims are taken on the remote,** so two clones never take the same one: a laptop and a cloud session, or two cloud runs. Git refuses each push below when someone else got there first.
-  - `add` takes ID NN by pushing the branch `rail/id/NN` at the ticket's first commit. If the push is refused, the ID is taken, and `add` tries the next ID. The ID branch is never deleted, so a dropped ticket's ID is never reused and its ticket file stays reachable. It is a branch, not a tag, because the cloud proxy refuses tag pushes (section 25). A branch would accept a fast-forward, but no other ticket's first commit descends from this one.
+  - `add` takes ID NN by moving one counter branch, `rail/ids`, a commit forward with a plain push. Each commit there is `rail id NN`, with the ticket's title below and the ID before it as its parent. Git accepts only a fast-forward, so when two clones try at once one push is refused, and that clone reads the counter again and takes the next ID. The chain shares no history with the project, so it costs a shallow clone nothing. It is never rewound, so a dropped ticket's ID is never reused, and its title stays readable there after its branch is gone. One branch holds every ID because a cloud session can't delete branches (section 25): the first design, a branch `rail/id/NN` per ID, left one behind for every ticket. The engine still reads those in a project that has them. It is a branch, not a tag, because the cloud proxy refuses tag pushes.
   - A claim is a commit with the `claimed` event, pushed to the ticket branch. If the push is refused, the branch moved: the engine fetches, and if the branch now holds a claim, it takes another ticket.
   - With no remote, a `mkdir` in the git common dir does the same within one clone.
 
@@ -290,14 +298,19 @@ when owner is not "agent": tell whoever is listening and take the next ticket, o
 - **Exit codes:** 0 when the command worked (read `owner`), 2 for a usage error, 3 when a step failed.
 - **Verbs:** `init`, `add`, `accept`, `amend`, `answer`, `next`, `advance`, `status`, `context`, `intake`, `drop`, `docs`, `doctor`, `sweep`, `ci`. `init` sets a project up (section 14). Packs add verbs such as `consult`. `forge` is the engine's internal module for `gh`, not a verb.
 - **Follow-up work after a merge** is a new ticket with `caused_by`; a merged ticket never reopens.
-- **`intake` has two forms:** `rail intake github` pulls issues labelled `rail`, and `rail intake --external-id KEY --title T --brief FILE` covers anything else. Both are idempotent by `external_id`. `intake` writes the request and leaves the tier and Done Contract empty. `next` then returns the agent task "write the Done Contract and set the tier", and the ticket gets its `accepted` event (auto tiers) or its contract PR (other tiers) only once ticket lint passes.
+- **`intake` has two forms:** issues labelled `rail` come in from GitHub, and `rail intake --external-id KEY --title T --brief FILE` covers anything else. `next` takes the labelled issues in itself whenever GitHub can be reached, so labelling an issue is the whole act of handing work over; `rail intake github` does the same on request. Both are idempotent by `external_id`. `intake` writes the request and leaves the tier and Done Contract empty. `next` then returns the agent task "write the Done Contract and set the tier", and the ticket gets its `accepted` event (auto tiers) or its contract PR (other tiers) only once ticket lint passes.
 - **Finding the ticket:** `--ticket <id or external id>`, then `RAIL_TICKET`, then the worktree it runs in. IDs are strings.
 - **Offline:** `next`, `advance` and `context` work offline, and network steps report `unavailable`. With no remote, `advance` merges locally with the same squash format.
 - **Procedures are printed by `next`** as the brief: how to implement, how to answer findings, how to ship. They cost nothing until needed, and they never collide with a craft skill's name.
 - **The `AGENTS.md` section,** about 15 lines under the heading `## Rail`, names the loop and points to `rail docs`. The heading lets the engine leave this section out of the reviewer's brief (section 8). Claude Code reads `AGENTS.md` on its own. A `CLAUDE.md` stops that, so if the project has one, `rail init` adds `@AGENTS.md` to it. The framework never creates `CLAUDE.md`. A `CLAUDE.local.md` or a `CLAUDE.md` in a parent folder stops it too, and `doctor` warns when it finds one.
 - **The SessionStart hook** prints a snapshot after a start or a compaction: ticket, state, Done Contract and scope. A crash or compaction needs no handoff written by the agent. The hook also puts `.rail/bin` on `PATH` (section 14).
 - **Each claim records `CLAUDE_CODE_SESSION_ID`,** so the snapshot shows the ticket this session is on, even when several sessions share the machine.
-- **A claim is held by its worktree, not by a session.** `next` prefers the ticket claimed with this session's id. Other claimed tickets are listed as resumable, and `next --ticket NN` takes one over after a crash and records the new session id. A takeover is a pushed commit, like a claim, so two takeovers started at once can't both succeed. In a clone without the ticket's worktree, such as a fresh cloud run, the takeover makes it again from the pushed branch. Two live sessions on one ticket is a person's mistake, which the engine doesn't try to prevent.
+- **A claim protects work in flight, and only that.** Each cloud run is a new session on a new clone, so no ticket may depend on the session that started it.
+  - **A shipped ticket needs no claim.** While it waits for CI or for its merge, the engine moves it from whichever session looks: it waits for the run, rebases a PR that fell behind, and merges a green auto tier. None of these is agent work, and none writes a claim.
+  - **A wait for a person shows from every session,** so any session labels it and reports it.
+  - **Work in flight** (`implementing`, `reviewing`) belongs to the session that claimed it while the ticket keeps moving. `next` prefers this session's own tickets and leaves another session's alone.
+  - **A quiet claim expires.** Every engine move writes a journal event and pushes it. After `[claim] stale_minutes` (60) with no event, the session is taken to have ended, and the next `next` resumes the ticket: a takeover is a pushed commit, like a claim, so two takeovers started at once can't both succeed, and it makes the worktree again from the pushed branch. `next --ticket NN` takes a ticket over at once.
+  - If the first session was only slow, both now work on the ticket. The first to push wins and the other's push is refused, so the cost is repeated work, never a broken branch.
 
 ## 7. Lifecycle
 
@@ -564,7 +577,7 @@ Assisted-by: claude-opus-5-5
   - To change it, comment on the PR. The agent amends the contract and asks again.
   - To reject it, close the PR, and the ticket is dropped.
 - **HIGH merge:** the agent implements on the same PR, and the person merges it.
-- **Inbox:** the engine adds `rail:needs-you` to the PR whenever a ticket waits for a person. Every ticket has a PR from `add` or from its claim (section 7), so one saved search lists everything: `is:open label:rail:needs-you`. It works on GitHub, on a phone, or from any host. GitHub doesn't notify you about PRs made with your own token, so the search is the inbox, and the `notify` hook (section 15) pings the desk. A ticket waits for:
+- **Inbox:** the engine adds `rail:needs-you` to the PR whenever a ticket waits for a person: every `next` labels every wait it sees, whether or not the agent has other work. Every ticket has a PR from `add` or from its claim (section 7), so one saved search lists everything: `is:open label:rail:needs-you`. Each wait's brief names the PR and says what to do there, because GitHub is where a person away from the session acts.
   - contract approval;
   - a HIGH merge;
   - the retry cap after `consult`;
@@ -605,10 +618,10 @@ Assisted-by: claude-opus-5-5
 **Other trackers and hosts aren't designed now.** The surface in section 19 keeps them possible later; ANSWERS H4 sketches how Linear, Jira and Paperclip could fit.
 
 **Away from the desk** needs no framework code either. A docs page shows what Claude Code ships (checked 2026-11-11):
-- **The loop prompt:** `rail intake github`; then `rail next --ticket NN` for each ticket listed as resumable, which finishes what an ended session left; then `rail next` until it returns `rest` or only waits on a person. A project that writes it into `.claude/loop.md` gets it from a bare `/loop`. The resume step is for setups where one runner works at a time: with several live sessions, a resumable ticket may be another session's current work.
+- **The loop prompt:** `rail next`, do what it says, `rail advance`, until `next` returns `rest` or only waits on a person. `next` itself takes in labelled issues, moves shipped tickets and resumes work an ended session left (section 6), so the prompt needs no steps of its own. A project that writes it into `.claude/loop.md` gets it from a bare `/loop`.
 - **`/loop`** reruns it in one session: every 5 minutes with `/loop 5m`, or at an interval Claude picks between 1 minute and 1 hour. The machine must stay on, and a loop expires after 7 days.
 - **A desktop scheduled task** survives restarts and starts a fresh session in the same clone each run.
-- **A cloud scheduled task** runs with the machine off, at most hourly, or on a GitHub event such as an issue labelled `rail`. Each run is a fresh clone. Section 5 keeps two runs from taking the same ticket, and `advance` pushes every commit, so a run resumes from the branch what the last one left.
+- **A cloud scheduled task** runs with the machine off, at most hourly, or on a GitHub event. It is the standard way to run unattended (section 26). Each run is a fresh session on a fresh clone. Section 5 keeps two runs from taking the same ticket, `advance` pushes every commit, and section 6 lets a run pick up what the last one left.
 - **`/goal`** works a labelled backlog until it is empty.
 - **Remote Control** lets the person answer from another device. `ask` rules still prompt in auto mode, so `sudo` or `git reset --hard` pauses the loop until someone answers.
 
@@ -774,7 +787,7 @@ cd /path/to/project && rail init
 **`rail` runs the project's own engine:**
 
 - Inside a project, the launcher hands over to `.rail/bin/rail`, so the project's changes to its engine take effect. Outside a project it offers only `init`.
-- Cloud sessions start from a fresh clone with no `~/rail`. The SessionStart hook adds `.rail/bin` to `PATH` through `CLAUDE_ENV_FILE`, so `rail` works in every session, local or cloud.
+- Cloud sessions start from a fresh clone with no `~/rail`. The SessionStart hook adds `.rail/bin` to `PATH` through `CLAUDE_ENV_FILE`. Claude Code runs a repository's hooks only in a session that starts with that one repository, so the cloud environment's setup script also links `rail` into `/usr/local/bin` (section 26), and `rail` works in every session.
 - CI runs `.rail/bin/rail ci`.
 
 **`rail init` checks Python 3.11+ and then:**
@@ -785,13 +798,14 @@ cd /path/to/project && rail init
   - its permission rules, hook entries and sandbox settings;
   - the Bash timeout values;
 - adds the workflow file and `.gitignore` lines;
+- writes `.rail/ruleset.json`, the GitHub ruleset for the person to import (section 26);
 - creates the labels `rail`, `rail:go` and `rail:needs-you` when the project has a GitHub remote.
 
 It never overwrites a file of the project's.
 
-**The first `rail next` returns the init task to Claude.** The agent proposes the following, and the person confirms:
+**The first `rail next` returns the init task to Claude.** On a person's own machine the agent proposes the following and the person confirms each. In a cloud session the agent decides, installs what the checks need, and opens one pull request; the person confirms it all by merging (section 26).
 
-- `setup` and `verify`
+- `setup`, `verify` and `provision`
 - `## Areas`
 - `risk_paths`
 - the default rules
@@ -804,7 +818,8 @@ Detecting the stack is judgment, which the agent does well. A script would need 
 - the `claude` CLI and the hook wiring;
 - a `CLAUDE.local.md`, or a `CLAUDE.md` in a parent folder, that would stop `AGENTS.md` loading;
 - that the config is valid;
-- that `rail` is a required check, and that merging is squash-only with the PR title and description as the default message;
+- that `rail` is a required check, that merging is squash-only with the PR title and description as the default message, and that GitHub deletes merged branches, each with the link to its settings page;
+- in a cloud session: that the machine is provisioned, that the environment's setup script linked `rail`, and whether Rail's hooks ran in this session;
 - that the three labels exist.
 
 **Dropped:**
@@ -832,10 +847,10 @@ Guards prevent mistakes; they are not a boundary.
     - `curl | sh`;
     - disk-wiping commands.
   - **Ask the person:**
-    - `sudo`;
-    - `git reset --hard`;
-    - `git clean -f`;
-    - `rm -r` outside the worktree.
+    - `rail answer --owner`, a person's decision on a finding, everywhere;
+    - on a person's own machine only: `sudo`, `git reset --hard`, `git clean -f`, and `rm -r` outside the worktree.
+- **The guard knows where it runs.** A cloud session's machine is disposable and nobody's own, and an ask stops an unattended run, because ask rules prompt in every permission mode. So in a cloud session the rules that protect a machine step aside: the four asks above, and the deny of `curl | sh`. The rules that protect the rail stay. For the same reason `sudo`, `git reset --hard` and `git clean -f` are asked by the hook and are no longer permission rules.
+- **The guard protects this project's branches.** A session can hold several repositories. After `cd DIR &&`, or with `git -C DIR`, a command in another repository is left alone. Whatever the hook can't follow is judged as this project's: `cd -`, `popd`, a subshell, a `cd` before `;`, `||`, `&` or `|`, `--git-dir`, `GIT_DIR=`, a variable. A push to this project's URL or folder from elsewhere is this project's, and a `gh` merge is judged by the repository it names.
 - **`session-start`** (SessionStart): the snapshot from section 6, and `.rail/bin` on `PATH` through `CLAUDE_ENV_FILE` (section 14).
 - **`notify`** (Notification, matcher `idle_prompt`) fires when Claude finished responding about a minute ago and the person hasn't typed since.
   - It asks the engine which tickets wait for a person and announces the ones not yet announced, for example "14: approve the contract · 17: merge", with the first PR link.
@@ -946,7 +961,7 @@ The rule for every overlap:
 - two-way issue sync
 - an MCP server
 - intake mirror mode
-- an unattended-mode variable
+- an unattended-mode variable. The engine does read where it runs (`CLAUDE_CODE_REMOTE`, section 26), which changes what it may install and which guard rules apply, not what is legal next
 - a stub host
 
 ## 20. Today's bugs, and where each goes
@@ -975,6 +990,7 @@ The rule for every overlap:
 | 5. Autonomy | `forge`; PR lifecycle to merge, including the engine's merge and the rebase of a PR that is behind; the contract PR and labels; per-ticket waits; the red-base check; the `notify` hook; `intake`; the sweep, which must land with LOW merging; the docs pages for away-from-desk and `github-runner` | A backlog with LOW, MEDIUM and HIGH tickets runs from one session, with HIGH waiting on the PR while the others merge. Two cloud runs started at once never take the same ID or claim, and a later run resumes a ticket an earlier one left half done |
 | 6. Standard features | `ARCHITECTURE.md` drafting and `doc-lint`; findings becoming checks; `rail docs` | **Ready to use:** a fresh repo and an existing repo each reach a merged MEDIUM ticket by following the docs alone |
 | 7. Packs | From section 18, as needed | Each has a named reader |
+| 8. Cloud first | Section 26: the cloud profile, provisioning, the cloud init task and the ruleset file, one counter branch for IDs, claims that protect only work in flight, intake inside `next`, the reviewer's model as a config field | A session that starts with nothing but the repository sets Rail up, and a scheduled task's fresh sessions carry a backlog to merge with no session kept open |
 
 - **The framework is written from scratch,** in a cloud environment. The current framework is a reference to read, not a base to change.
 - Phases 1 and 2 can overlap.
@@ -1120,3 +1136,69 @@ Checked on 2026-11-12 in the cloud session (Claude Code 2.1.322), after the owne
 - **What the default rules would stop:** merging a pull request no person approved, starting a nested agent with approvals off, and widening the agent's own permissions unless the person names the change. The first is what `rail advance` does for `auto_tiers`, by the owner's policy.
 
 So the seed's settings now carry allow rules for the agent's verbs (section 15). That is the whole change: the classifier's own lists stay at their defaults.
+
+### Phase 5: the live run on GitHub, second part
+
+On 2026-11-12, after the owner merged the setup pull request, seven tickets ran on `timur-makarov/throw-away-repo` from a cloud session, all through real pull requests, the `rail` check on GitHub Actions, and the engine's merge:
+
+- **A LOW and a MEDIUM ticket merged with no person.** Each got its ID, its pull request at claim, its ship, a green `rail` check about 20 seconds after the push, and a squash commit with its trailers through the async merge endpoint. The MEDIUM ticket's review was a real `claude -p` run, 0 findings, recorded in the Evidence table.
+- **Two sessions at once.** Two clones ran `rail add` at the same moment and got IDs 3 and 4. They ran `rail next` at the same moment and each claimed one ticket.
+- **Resume.** The second clone was deleted with a half-written file. A third clone, as a new session, took the ticket over with `rail next --ticket 4`, finished it and merged it. The uncommitted file was gone, as it should be.
+- **Intake.** An issue labelled `rail` became ticket 5, ran to merge, and `Closes #8` closed the issue.
+- **The sweep.** One real review pass over what had merged without a review. It found five ways the guard change made that morning failed open, one way round the `--owner` ask rule, and two calculator functions that leaked a `ZeroDivisionError`. Its summary became two tickets, and its own merge carried the `Sweep:` trailer.
+- **A HIGH ticket** (the engine update those findings need) opened its contract pull request and waits for the owner.
+
+What it found in the engine, and what changed:
+
+- **A pull request merged a moment ago read as dropped.** GitHub's list of pull requests carries `merged_at` and no `merged` flag. The fake GitHub in the tests gave the flag; it now answers as GitHub does.
+- **The next brief counted merged lines as its own** when the project's own checkout was behind the base. The size count now starts from the ticket worktree's merge base.
+- **The setup's own commits were offered to a sweep,** because the owner merged it with a merge commit. The sweep now counts what landed on the base branch, one entry per merge.
+- **A fresh session ignored a green ticket and an abandoned one,** both claimed by sessions that had ended, and offered a sweep instead. This is the reason for the claim rules in section 6.
+- **The contract's `rail:needs-you` label came late,** only once the agent had no other work. Every `next` labels every wait now.
+- **Every ticket left two branches behind,** its own and `rail/id/NN`, because the cloud can't delete branches. GitHub's "Automatically delete head branches" covers the first, and the counter branch (section 5) ends the second.
+
+Not run live: a pull request behind its base, and a conflict. Both need the ruleset, which only the owner can make. The changes of section 26 are tested on the fake GitHub and on plain git remotes; they reach the live project through the HIGH ticket above.
+
+## 26. Cloud first
+
+Decided by the owner on 2026-11-12: a Claude Code cloud session is the standard place for Rail to work. The machine there is made for the session, starts from a fresh clone, and belongs to nobody, so the framework takes what it needs from it, and the person hands work over and answers on GitHub. A person's own machine stays supported, with the rules that protect it.
+
+**The engine knows where it runs.** `CLAUDE_CODE_REMOTE=true` marks a cloud session; `RAIL_CLOUD=1` or `0` overrides it for tests and scripts. `rail doctor` says which it is.
+
+| | In a cloud session | On a person's own machine |
+|---|---|---|
+| Tools the checks need | Rail installs them: `[commands] provision`, as root, once per machine | The person installs them; `rail provision` shows the command and runs nothing |
+| Setting a project up | The agent does all of it and opens one pull request; the person confirms by merging | The agent proposes each choice and the person confirms it |
+| Guard | The rules that protect the rail | The same, plus the rules that protect the machine (section 15) |
+| A person's acts | On GitHub: `rail:go`, a comment, the merge button | The same, or `rail accept` in the terminal |
+
+**What the cloud gives, and what it refuses** (checked in the session and in Claude Code's docs, 2026-11-12):
+
+- The machine is Ubuntu, root, with Docker, PostgreSQL, Redis and the common language toolchains, and about 4 CPUs, 16 GB of memory and 30 GB of disk.
+- An environment's **setup script** runs as root when the environment's machine is first built, from the folder that holds the repositories. Its result is kept as a snapshot and reused by later sessions; it is rebuilt when the script changes and about weekly. The script must finish within about five minutes to be kept.
+- A repository's **hooks and permission rules load only in a session that starts with that one repository.** A session with several repositories, and a thread in a project, load neither.
+- **Scheduled tasks** start a fresh cloud session on a schedule (at most hourly), on a GitHub event, or on an API call, in auto mode.
+- **Ask rules prompt in every permission mode,** auto mode included.
+- The session's GitHub access **refuses** branch deletion, tag pushes, GraphQL, and writes to repository settings and rulesets, whatever token is supplied. It allows pushes to any branch, force pushes included, and the REST calls the forge makes.
+
+**What follows from that:**
+
+1. **Provisioning.** `[commands] provision` is the one place a project says what its checks need beyond the image: scanners, CLIs, services. `rail provision` runs it and notes, in the machine's home folder, the hash of the command that ran. In a cloud session the first `next` on a machine without that note returns `rail provision`, so a new machine repairs itself. `rail ci` runs it first on a CI runner, with `sudo` there, so the workflow file needs no project-specific steps. On a person's machine it never runs.
+2. **The environment's setup script** is three lines that `rail doctor` prints: for each repository with `.rail/bin/rail`, link it to `/usr/local/bin/rail` and run `rail provision`. The agent proposes them with its environment tool and the person approves once. They make the snapshot hold the tools, and they give every session `rail` on `PATH`, including the sessions where no hook runs. What the script does stays in the repository's config, so changing a tool is a ticket, not an environment edit.
+3. **The init task has a cloud form.** The agent writes the commands, the map, the risk paths and the rules, installs the tools, and opens one pull request whose description lists what only the person can do. The person's acts are: merge it; import `.rail/ruleset.json`; set squash merging and deletion of merged branches; approve the setup script.
+4. **GitHub is the guard.** The ruleset requires the `rail` check and a pull request on the base branch, keeps branches up to date, allows squash merges only, and blocks force pushes and deletion. A cloud session can't change it, which is what makes it a guard an agent can't get around, and it holds in the sessions where Rail's hook doesn't load. `rail ci` repeats every ship check there. `rail init` writes the ruleset as a file because the session can't create it.
+5. **Machine rules are local** (section 15). The sandbox setting stays in the seed for a person's machine; the cloud has no use for it, and the machine itself is the boundary there.
+6. **A session is disposable too.** Sections 5 and 6: IDs come from one counter branch, a shipped ticket is moved by whichever session looks, a quiet claim expires, and `next` takes labelled issues in. A scheduled task whose prompt is "run `rail next` and do what it says until only a person can act" is then enough to carry a backlog with no session kept open. Its triggers are GitHub events (an issue labelled, a pull request labelled, a pull request closed) and a schedule as a net.
+7. **The person's desk is GitHub and the Claude app.** Waits are labelled at once and say what to do on the pull request. Each claim records the cloud session's link, and each pull request ends with it, so a person can open the conversation that did the work. The desktop `notify` hook is for a person's own machine; a cloud session ends its turn by naming the waits, and the app notifies.
+8. **The reviewer's model is a config field,** `[review] model`, and so is consult's. The engine passes it as `ANTHROPIC_MODEL`, which `claude -p` honours in a cloud session (checked), and as `RAIL_MODEL`. The model that answered is stored with each run and shown in the Evidence table. A second vendor is not set up; `[consult] command` still takes one.
+
+**Looked at and not built:**
+
+- **A plugin.** A cloud session doesn't install the plugins a repository turns on, so the engine stays a folder in the repository.
+- **A GitHub token.** The cloud's limits apply whatever token is supplied, so it would lift none of them.
+- **Changing auto mode's own rule lists.** A repository can't set them, and allow rules for the agent's verbs are decided before the classifier (section 15).
+- **Sessions in place of worktrees.** Worktrees stay: they keep the project's own checkout on the base branch and let one session hold a waiting ticket while it works another. More work at once is more sessions, which a person or a scheduled task starts.
+- **Saving unfinished work when a turn ends.** A machine that is reclaimed loses what `advance` hasn't pushed, which is the uncommitted part of one ticket. The Stop hook was removed on the owner's decision, and the cost is repeated work, so nothing is built until it is seen to matter.
+- **Tracker connectors.** Later, by the owner's decision. GitHub issues work now.
+
+**Not verified yet:** the setup-script lines inside a real environment build (they were run by hand in the session, where they linked `rail` and provisioned); a scheduled task end to end; the ruleset file's import in GitHub's settings; and section 6's claim rules on live GitHub, where only the fake has run them.

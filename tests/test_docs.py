@@ -75,7 +75,11 @@ class Operations(RailTest):
         self.assertIn("## Decision", p.rail("docs", "adr")["text"])
         self.assertIn("People keep four acts", p.rail("docs", "environments")["text"])
         self.assertIn("/loop", p.rail("docs", "away")["text"])
-        self.assertIn("rail intake github", p.rail("docs", "away")["text"])
+        self.assertIn("takes in issues labelled `rail`", p.rail("docs", "away")["text"])
+        cloud = p.rail("docs", "cloud")["text"]
+        for text in ("Import a ruleset", ".rail/ruleset.json", "Automatically delete head branches", "rail provision",
+                     "rail:needs-you", "stale_minutes", "rail/ids", "several repositories"):
+            self.assertIn(text, cloud)
         self.assertIn("required check", p.rail("docs", "github")["text"])
         self.assertIn("GITHUB_TOKEN", p.rail("docs", "github-runner")["text"])
         self.assertIn("Sweep:", p.rail("docs", "sweep")["text"])

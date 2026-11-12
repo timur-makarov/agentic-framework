@@ -979,8 +979,9 @@ def cmd_init(args):
                                  "detail": f"created {', '.join(created)}" if created else "all three exist"})
             except forge.ForgeError as e:
                 receipts.append({"step": "labels", "status": "unavailable", "detail": str(e)})
-    brief = ("Rail is installed. Next: rail next, which returns the init task: setup and verify, ## Areas, risk_paths,"
-             " rules and .worktreeinclude, for the person to confirm.")
+    brief = ("Rail is installed. Next: rail next, which returns the init task: the project's commands, ## Areas,"
+             " risk_paths and rules. " + ("In this cloud session you set them up and the person confirms by merging one"
+                                          " pull request." if cloud() else "You propose each and the person confirms."))
     return answer(code="INITIALISED", owner="agent", action={"kind": "script", "brief": brief, "command": "rail next"},
                   steps_=receipts, root=root)
 
@@ -989,8 +990,8 @@ def init_task(project):
     """The first `rail next` returns the init task until the project's config is on the base branch (plan, section 14)."""
     if gitx.read_blobs([f"{project.base_ref}:.rail/config.toml"], project.root).get(f"{project.base_ref}:.rail/config.toml"):
         return None
-    from .init import INIT_TASK
-    brief = INIT_TASK.format(base=project.base, depth=project.config["map"]["depth"])
+    from .init import INIT_TASK, INIT_TASK_CLOUD
+    brief = (INIT_TASK_CLOUD if cloud() else INIT_TASK).format(base=project.base, depth=project.config["map"]["depth"])
     return answer(owner="agent", code="INIT_TASK", action={"kind": "agent_task", "brief": brief}, cwd=".")
 
 

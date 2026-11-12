@@ -8,6 +8,8 @@ migration_paths = ["**/migrations/**"]    # a HIGH floor; tickets touching them 
 [commands]
 setup = ""                                # reader: claim (after each worktree is made) and CI
 verify = ""                               # reader: ship and CI. The whole project: tests, lint, a secret scan, a dependency scan
+provision = ""                            # reader: rail provision, next in a cloud session, and CI. Installs, as root, what the
+                                          # checks need on a machine made for the work; never run on a person's own computer
 timeout_secs = 900                        # reader: every command run: setup, verify, each check, each review run
 
 [risk_paths]                              # reader: add (floors matched against scope_paths) and ship (changed files)
@@ -33,8 +35,14 @@ ignore = []
 # the command runs through sh; --json-schema takes the schema's text, not a path. The engine resets the worktree afterwards
 command = '''claude -p --safe-mode --system-prompt-file .rail/engine/reviewer.md --tools Read,Grep,Glob,Bash,Edit,Write --allowedTools Bash,Edit,Write --disallowedTools 'Bash(git push *)' --output-format json --json-schema "$(cat .rail/engine/review-v1.json)"'''
 
+model = ""                                # the model the reviewer runs on, such as "claude-opus-5-5"; empty is the CLI's default
+
+[claim]
+stale_minutes = 60                        # reader: next; another session's work with no journal event for this long is resumed
+
 [consult]                                 # reader: the consult pack; read-only, with the brief on stdin
 command = "claude -p --safe-mode --tools Read,Grep,Glob"
+model = ""                                # the model consult runs on; empty is the CLI's default
                                           # point it at another vendor's CLI when you have one; claude is labelled same-model
 
 [[rules]]                                 # reader: ship and CI; structure rules on added lines (rail docs rules)

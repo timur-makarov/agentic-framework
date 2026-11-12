@@ -34,6 +34,17 @@ class Init(RailTest):
         task = p.rail("next")
         self.assertEqual((task["reason"]["code"], task["owner"], task["action"]["kind"]), ("INIT_TASK", "agent", "agent_task"))
         self.assertIn("## Areas", task["action"]["brief"])
+        self.assertIn("propose each of these to the person", task["action"]["brief"])
+        # In a cloud session the agent sets everything up, and the person confirms once, by merging.
+        cloud = p.rail("next", cloud=True)["action"]["brief"]
+        self.assertIn("Set the project up yourself", cloud)
+        for text in ("`provision`", "import .rail/ruleset.json", "Automatically delete head branches",
+                     "environment's setup script"):
+            self.assertIn(text, cloud)
+        ruleset = json.loads(read(p.path(".rail/ruleset.json")))
+        self.assertEqual(ruleset["conditions"]["ref_name"]["include"], ["refs/heads/main"])
+        self.assertEqual([r["type"] for r in ruleset["rules"]],
+                         ["deletion", "non_fast_forward", "pull_request", "required_status_checks"])
         p.git("add", "-A")
         p.git("commit", "--quiet", "-m", "Set up Rail")
         self.assertEqual(p.rail("next")["reason"]["code"], "NO_WORK")
@@ -77,6 +88,7 @@ class Init(RailTest):
         p.git("branch", "-m", "master")
         p.rail("init")
         self.assertIn('base_branch = "master"', read(p.path(".rail/config.toml")))
+        self.assertIn('"refs/heads/master"', read(p.path(".rail/ruleset.json")))
 
     def test_init_on_a_setup_branch_takes_the_remotes_default_branch_as_the_base(self):
         # A cloud session's clone has no origin/HEAD, and init there runs on a branch made for the setup.
