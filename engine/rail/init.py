@@ -70,9 +70,15 @@ def _merge(project_value, ours):
 
 
 def _base_branch(root):
+    """The remote's default branch; with no remote, the branch init runs on."""
     head = gitx.git(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], root, check=False).stdout.strip()
     if head:
         return head.split("/", 1)[1]
+    # A clone made without origin/HEAD (cloud sessions make them): ask the remote, so a setup branch isn't taken for the base.
+    asked = gitx.git(["ls-remote", "--symref", "origin", "HEAD"], root, check=False).stdout
+    for line in asked.splitlines():
+        if line.startswith("ref: refs/heads/") and line.endswith("\tHEAD"):
+            return line[len("ref: refs/heads/"):-len("\tHEAD")]
     current = gitx.git(["symbolic-ref", "--quiet", "--short", "HEAD"], root, check=False).stdout.strip()
     return current or "main"
 

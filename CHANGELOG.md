@@ -53,3 +53,4 @@ One line for each change, saying why.
 - Make a ticket whose after dependency was dropped wait for a person, because it could otherwise wait forever.
 - Record the ready-to-use result in section 25 of the plan.
 - Point the install line at the framework's own repository, timur-makarov/agentic-framework.
+- Make rail init ask the remote for its default branch when the clone has no origin/HEAD (cloud clones have none), so init run on a setup branch no longer takes that branch for the base.

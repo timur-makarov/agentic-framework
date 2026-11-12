@@ -77,6 +77,19 @@ class Init(RailTest):
         p.rail("init")
         self.assertIn('base_branch = "master"', read(p.path(".rail/config.toml")))
 
+    def test_init_on_a_setup_branch_takes_the_remotes_default_branch_as_the_base(self):
+        # A cloud session's clone has no origin/HEAD, and init there runs on a branch made for the setup.
+        seed = Fixture(os.path.join(self.tmp, "seed"), init=False)
+        seed.git("add", "-A")
+        seed.git("commit", "--quiet", "-m", "start")
+        bare = os.path.join(self.tmp, "remote.git")
+        seed.git("clone", "--quiet", "--bare", seed.root, bare, cwd=self.tmp)
+        p = Fixture(os.path.join(self.tmp, "clone"), remote=bare)
+        p.git("remote", "set-head", "origin", "--delete")
+        p.git("checkout", "--quiet", "-b", "setup-rail")
+        p.rail("init")
+        self.assertIn('base_branch = "main"', read(p.path(".rail/config.toml")))
+
 
 class Launcher(RailTest):
     def test_inside_a_project_rail_runs_the_projects_own_engine(self):
