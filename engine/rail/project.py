@@ -102,7 +102,9 @@ class Project:
     def sync(self):
         """Fetch from the remote when there is one. Offline is fine: the network steps say so."""
         if self.remote:
+            from . import forge
             self.online = gitx.fetch(self.root, self.remote)
+            forge.expire()  # what GitHub said before the fetch may be old too
         return self.online
 
     def worktree_path(self, nn):
@@ -239,8 +241,11 @@ class Project:
             with open(note) as f:
                 lease = f"{branch}:{f.read().strip()}"
         result = gitx.push(self.root, self.remote, f"refs/heads/{branch}:refs/heads/{branch}", lease)
-        if result == "ok" and os.path.exists(note):
-            os.remove(note)
+        if result == "ok":
+            from . import forge
+            forge.expire()  # the pull request's head moved
+            if os.path.exists(note):
+                os.remove(note)
         return result
 
     def append_events(self, t, events, message, lease=None, files=None):

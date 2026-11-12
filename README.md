@@ -53,5 +53,6 @@ then `rail docs cloud` and `rail docs loop`.
 ## This repository
 
 `engine/` is copied into each project by `rail init`; `seed/` holds the files it copies once; `packs/` holds
-optional features; `tests/` holds the end-to-end tests (`python3 -m unittest discover -s tests`).
+optional features; `tests/` holds the end-to-end tests: `python3 tests/run.py` runs them on several workers,
+and `python3 -m unittest discover -s tests` one after another.
 `CHANGELOG.md` says why each change was made.

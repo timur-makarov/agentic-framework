@@ -107,6 +107,9 @@ def globs_overlap(a, b):
     return globmatch(a, b) or globmatch(b, a)
 
 
+AFTER_SHELL = []  # called after every shell command: what the engine remembers about git and GitHub may be old
+
+
 def run_shell(command, cwd, env_extra=None, timeout=None, stdin=None):
     """Run a command through sh, with `stdin` as its input. Returns (exit code or None on timeout, output, ms)."""
     env = dict(os.environ)
@@ -126,6 +129,8 @@ def run_shell(command, cwd, env_extra=None, timeout=None, stdin=None):
         code = None
     if code != 0 and errors:  # with stdin, stderr is kept apart so stdout stays clean JSON
         output = (output or "") + errors
+    for forget in AFTER_SHELL:
+        forget()  # the command may have changed the repository, and time has passed on GitHub
     return code, output or "", int((time.monotonic() - start) * 1000)
 
 

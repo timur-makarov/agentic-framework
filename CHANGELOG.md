@@ -66,3 +66,6 @@ One line for each change, saying why.
 - Make the ruleset file name the default branch, so the one file in seed/ fits every repository and can be imported straight from the framework; the README and the docs say where it is and that GitHub wants it downloaded first.
 - Say on a contract pull request that it must not be merged, because its page has a merge button and a person took it for the approval; with the ruleset GitHub refuses the merge.
 - Let doctor count a ruleset that allows squash merges only on the base branch as squash only, so a repository set up from the ruleset file passes without also changing its merge buttons.
+- Add tests/run.py, which runs the tests on several workers, because each test drives the real launcher through real git and the suite took four minutes on one core.
+- Read GitHub once per command instead of once per derivation: what the engine read holds until it writes there, fetches, pushes or runs a shell command, and a pull request is read on its own only once its ticket has shipped. A ship went from 17 GitHub calls to 7, which is most of what a real rail call waits for.
+- Remember git's answers about refs and objects until the repository changes, and keep the engine's compiled files in the home folder instead of compiling it on every call; neither leaves anything in a project.

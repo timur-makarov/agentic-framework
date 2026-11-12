@@ -55,12 +55,13 @@ def requested(project, args):
     return getattr(args, "ticket", None) or os.environ.get("RAIL_TICKET") or ticket_from_cwd(project)
 
 
-def load(project, fresh_forge=True):
-    """Tickets and their facts. The forge is read again each time, unless `fresh_forge` is False."""
+def load(project):
+    """Tickets and their facts. GitHub is read again only when something can have changed there."""
     from .forge import Forge
 
-    if fresh_forge or getattr(project, "forge", None) is None:
-        project.forge = Forge(project)
+    earlier = getattr(project, "forge", None)
+    if earlier is None or earlier.stale:
+        project.forge = Forge(project, earlier)
     tickets = project.tickets()
     return tickets, derive(project, tickets)
 

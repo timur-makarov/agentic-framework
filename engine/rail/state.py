@@ -216,6 +216,7 @@ class Facts:
             return "implementing"
         if self.pr_open:
             # The engine reads CI only once the ticket has shipped this patch, and only on the head it pushed.
+            self.pr = self.forge.full(self.pr)
             tip = gitx.rev(t.ref, project.root)
             self.pushed = self.pr["head"]["sha"] == tip
             self.conflict = self.pr.get("mergeable_state") == "dirty"

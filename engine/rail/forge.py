@@ -7,13 +7,26 @@ import json
 import re
 import subprocess
 
-from . import gitx
+from . import gitx, util
 
 LABELS = {
     "rail": ("0e8a16", "Rail: an issue for rail intake to turn into a ticket"),
     "rail:go": ("1d76db", "Rail: a person approves or continues this ticket"),
     "rail:needs-you": ("d93f0b", "Rail: this ticket waits for a person"),
 }
+
+
+# What one Forge has read from GitHub holds until something can have changed it: a write of the engine's own (a
+# pull request, a label, a merge, a push), a fetch, or a shell command, during which CI may have finished.
+_epoch = 0
+
+
+def expire():
+    global _epoch
+    _epoch += 1
+
+
+util.AFTER_SHELL.append(expire)
 
 
 class ForgeError(Exception):
@@ -152,16 +165,23 @@ class Forge:
     then report `unavailable`, and state comes from git and the journal alone.
     """
 
-    def __init__(self, project):
+    def __init__(self, project, earlier=None):
         self.project = project
         self.repo = github_repo(project) if project.remote else None
         self.ok = bool(self.repo) and project.online
+        self.epoch = _epoch
         self._pulls = None
         self._full = {}
         self._checks = {}
-        self._required = None
+        self._required = earlier._required if earlier else None  # the base branch's rules don't change mid-command
+
+    @property
+    def stale(self):
+        return self.epoch != _epoch
 
     def call(self, method, path, body=None):
+        if method != "GET":
+            expire()
         return api(method, f"repos/{self.repo}/{path}", body)
 
     # --- pull requests ----------------------------------------------------------
@@ -178,15 +198,22 @@ class Forge:
         return self._pulls
 
     def pr(self, branch):
+        """The newest pull request from a branch, as the list gives it: labels, head, title, merged_at."""
         if not self.ok or not branch:
             return None
-        pr = self.pulls().get(branch)
-        if pr and pr.get("state") == "open" and pr["number"] not in self._full:
+        return self.pulls().get(branch)
+
+    def full(self, pr):
+        """An open pull request read on its own, for mergeable_state: the list doesn't carry it. One call per pull
+        request, so it is asked only for a shipped ticket, where a conflict or a base that moved matters."""
+        if not pr or pr.get("state") != "open":
+            return pr
+        if pr["number"] not in self._full:
             try:
                 self._full[pr["number"]] = self.call("GET", f"pulls/{pr['number']}")
             except ForgeError:
                 self._full[pr["number"]] = pr
-        return self._full.get(pr["number"], pr) if pr else None
+        return self._full[pr["number"]]
 
     def open_pr(self, branch, title, body):
         pr = self.call("POST", "pulls", {"title": title, "head": branch, "base": self.project.base, "body": body})
