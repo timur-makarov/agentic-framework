@@ -284,7 +284,13 @@ class Deny(RailTest):
             "((1 < 2)) && {C}", "echo a >> f; {C}", "echo a 2>&1 | tee f; {C}", "echo a <<< 'b'\n{C}",
             "printf '%s\\n' \"it's\" ; {C}", "git \\\n{A}", "echo 'x\ncat <<EOF\n' ; {C}\nEOF",
             "echo \"a\nb\" ; {C} ; echo \"c\nd\"", "{C} # now", "{C} 2>&1 | tail -3", "{C} > out.log 2>&1",
-            "echo '' && {C}", "true \"\" ; {C}", "cat <<<'EOF'\necho $({C})\nEOF"]
+            "echo '' && {C}", "true \"\" ; {C}", "cat <<<'EOF'\necho $({C})\nEOF",
+            # A cd the shell never runs, or runs only in a part it may skip: /tmp is another repository here.
+            "if false; then cd /tmp && true; fi; {C}", "while false; do cd /tmp && true; done; {C}",
+            "until true; do cd /tmp && true; done; {C}", "false && {{ cd /tmp && true; }}; {C}",
+            "false && cd /tmp && true; {C}", "if true; then :; else cd /tmp && true; fi; {C}",
+            "if false; then\ncd /tmp && true\nfi\n{C}", "for d in; do cd /tmp && true; done; {C}",
+            "false && cd /tmp && true\n{C}", "true || cd /tmp && {C}", "FOO=1 cd /tmp 2>/dev/null; {C}"]
     DENIED = ["git push -f origin topic", "git push origin HEAD:main", "gh pr merge 5",
               "gh api -X PUT repos/{owner}/{repo}/pulls/5/merge"]
 
@@ -296,8 +302,10 @@ class Deny(RailTest):
                 yield command, shape.replace("{C}", command).replace("{A}", command[4:]).replace("{{", "{").replace("}}", "}")
 
     def judge(self, line):
-        return load_guard().deny(line, "main", "7-work", cwd="/proj", locate=lambda d: (True, "7-work"), repo="acme/app",
-                                 cloud=True)
+        def locate(directory):  # /tmp stands for another repository, anywhere else is this project
+            return (False, "main") if os.path.realpath(directory) == os.path.realpath("/tmp") else (True, "7-work")
+
+        return load_guard().deny(line, "main", "7-work", cwd="/proj", locate=locate, repo="acme/app", cloud=True)
 
     def test_a_denied_command_is_found_wherever_the_shell_runs_it(self):
         missed = [line for command, line in self.lines() if not self.judge(line)]
@@ -322,7 +330,9 @@ class Deny(RailTest):
         for name in ("git", "gh"):
             path = os.path.join(bin_dir, name)
             with open(path, "w") as f:
-                f.write(f'#!/bin/sh\necho "{name} $*" >> "{log}"\necho "[$GH_REPO] $*" >> "{log}.repo"\n')
+                # What it was asked, when it runs in the work folder: after a real cd it is another folder's business.
+                f.write(f'#!/bin/sh\n[ "$PWD" = "{os.path.realpath(work)}" ] && echo "{name} $*" >> "{log}"\n'
+                        f'echo "[$GH_REPO] $*" >> "{log}.repo"\n')
             os.chmod(path, 0o755)
         env = {"PATH": bin_dir + os.pathsep + "/usr/bin" + os.pathsep + "/bin", "HOME": work}
         ran_and_passed, ran = [], 0
@@ -369,6 +379,15 @@ class Deny(RailTest):
         subprocess.run(["git", "init", "--quiet", "-b", "main", other], check=True)
         # Every line is a command for certain: the cd holds.
         self.assertIsNone(decide(p, f"cd {other} && git add -A\ngit commit -m 'x'\ngit push origin main"))
+        self.assertIsNone(decide(p, f"cd {p.root} && git status && cd {other} && git push origin main"))
+        # A cd is believed as a plain command in a flat chain only. Behind a keyword or in braces the shell may skip
+        # it, and one from the middle of a chain holds until that chain ends.
+        for command in (f"if false; then cd {other} && true; fi; git push origin main",
+                        f"while false; do cd {other} && true; done; gh pr merge 5",
+                        f"false && {{ cd {other} && true; }}; git push -f origin 7-work",
+                        f"false && cd {other} && true; git push origin main",
+                        f"if false; then\ncd {other} && true\nfi\ngit push origin main"):
+            self.assertEqual(decide(p, command), "deny", command)
         # A quote runs over the lines, or a here-document follows: the line with the cd may be text.
         for command in (f'echo "\ncd {other} && echo hi\n"\ngit push origin main',
                         f"cat <<EOF\ncd {other} && echo hi\nEOF\ngit push origin main",
