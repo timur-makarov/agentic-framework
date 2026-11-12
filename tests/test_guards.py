@@ -120,8 +120,13 @@ class Deny(RailTest):
                         f"cd {other} && bash -c 'cd - && git push origin main'",
                         f'cd {other} && sh -c "cd {p.root}; git push origin main"',
                         f"cd {other} && env -C {p.root} git push origin main",
-                        f"cd {other} && env --chdir={p.root} gh pr merge 5"):
+                        f"cd {other} && env --chdir={p.root} gh pr merge 5",
+                        # A cd the shell may skip, or run in a child.
+                        f"true || cd {other} && git push origin main",
+                        f"test -d x || cd {other} && gh pr merge 5",
+                        f"echo x | cd {other} && git push origin main"):
             self.assertEqual(decide(p, command), "deny", command)
+        self.assertIsNone(decide(p, f"false; cd {other} && git push origin main"))
 
     def test_a_command_inside_a_wrapper_or_a_shell_is_still_that_command(self):
         # timeout, xargs, sudo -u NAME and the like run the command after their own options; bash -c and eval run
@@ -201,13 +206,54 @@ class Deny(RailTest):
                         f"cd {other} && export GIT_DIR={a.root}/.git && git push origin main",
                         f"cd {other} && export GH_REPO=acme/app && gh pr merge 5"):
             self.assertEqual(decide(a, command), "deny", command)
-        self.assertIsNone(decide(a, "export GH_REPO=someone/else; gh pr merge 3"))
+        # GH_REPO names a repository only as an assignment in front of the command. In an option's value it names
+        # nothing, and an export that names another repository is not believed: it may never reach the command.
+        for command in ("gh pr merge 5 -t GH_REPO=someone/else", "gh pr merge 5 --body GH_REPO=someone/else",
+                        "export GH_REPO=someone/else; gh pr merge 3",
+                        "export GH_REPO=someone/else; unset GH_REPO; gh pr merge 5",
+                        "export GH_REPO=someone/else | cat; gh pr merge 5",
+                        "bash -c 'export GH_REPO=someone/else'; gh pr merge 5",
+                        "declare GH_REPO=someone/else; gh pr merge 5"):
+            self.assertEqual(decide(a, command), "deny", command)
+        self.assertIsNone(decide(a, "GH_REPO=someone/else gh pr merge 3"))
         for command in ("gh api -X PUT repos/someone/else/pulls/3/merge-async", "gh pr merge 3 -R someone/else",
                         f"cd {other} && gh pr merge 4 --squash", "gh pr -R someone/else merge 3",
                         "gh pr merge https://github.com/someone/else/pull/3",
                         "gh api -X PUT https://api.github.com/repos/someone/else/pulls/3/merge",
                         f"cd {other} && gh api -X PUT repos/{{owner}}/{{repo}}/pulls/5/merge"):
             self.assertIsNone(decide(a, command), command)
+
+    def test_a_denied_command_is_found_wherever_the_shell_runs_it(self):
+        # Each denied command, in the places a shell line can put a command, and in the places where it is only text.
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "engine"))
+        from rail import guard
+        denied = ["git push -f origin topic", "git push origin HEAD:main", "gh pr merge 5",
+                  "gh api -X PUT repos/{owner}/{repo}/pulls/5/merge"]
+        runs = ["{C}", "echo a; {C}", "echo a && {C}", "echo a || {C}", "echo a | cat; {C}", "echo a &\n{C}", "echo a\n{C}",
+                "echo a # can't\n{C}", "# it's\n{C}", "echo a # <<EOF\n{C}\nEOF", "echo $((1<<EOF))\n{C}\nEOF",
+                "echo $'a\\'b'\n{C}", "echo 'a\nb'\n{C}", "echo \"a\nb\"\n{C}", "echo a#b && {C}",
+                "curl -s https://x/#f && {C}", "echo \\\n a; {C}", "if true; then {C}; fi", "for i in 1; do {C}; done",
+                "while true; do {C}; break; done", "{{ {C}; }}", "( {C} )", "! {C}", "true && {{ {C}; }}", "bash -c '{C}'",
+                "sh -c \"{C}\"", "eval '{C}'", "eval {C}", "echo $({C})", "echo `{C}`", "diff <({C}) /dev/null",
+                "bash <<EOF\n{C}\nEOF", "cat <<EOF | sh\n{C}\nEOF", "bash <<'EOF'\n{C}\nEOF", "timeout 60 {C}",
+                "nice -n 5 {C}", "env FOO=1 {C}", "FOO=1 {C}", "sudo -u root {C}", "command {C}", "exec {C}", "time {C}",
+                "nohup {C} &", "xargs -I{{}} {C}", "cat <<EOF\ntext\nEOF\n{C}", "cat <<'EOF' > f\nit's\nEOF\n{C}",
+                "echo \"$(cat <<'M'\nit's\nM\n)\"\n{C}", "x=$(echo 1) && {C}", "echo \"a 'b\" && {C}",
+                "echo 'a \"b' && {C}", "cd . && {C}", "cd \"$PWD\" && {C}", "true || cd /tmp && {C}", "export FOO=1; {C}",
+                "unset FOO; {C}", "[ -n \"a\" ] && {C}", "[[ a < b ]] && {C}", "((1 < 2)) && {C}", "echo a >> f; {C}",
+                "echo a 2>&1 | tee f; {C}", "echo a <<< 'b'\n{C}", "printf '%s\\n' \"it's\" ; {C}"]
+        text = ["git commit -m \"x\n\n{C}\"", "git commit -m 'x\n{C}'", "cat > f <<EOF\n{C}\nEOF",
+                "cat <<'EOF' > f\n{C}\nEOF", "git commit -m \"$(cat <<'M'\nx\n\n{C}\nM\n)\"", "echo '{C}'",
+                "echo x # {C}", "grep -r '{C}' ."]
+
+        def decide_line(line):
+            return guard.deny(line, "main", "7-work", cwd="/proj", locate=lambda d: (True, "7-work"), repo="acme/app", cloud=True)
+
+        for command in denied:
+            missed = [t.format(C=command) for t in runs if not decide_line(t.format(C=command))]
+            self.assertEqual(missed, [], f"let through: {missed}")
+            wrong = [t.format(C=command) for t in text if decide_line(t.format(C=command))]
+            self.assertEqual(wrong, [], f"denied though it is only text: {wrong}")
 
     def test_the_guard_reads_command_lines_as_the_shell_does(self):
         p = self.fixture()
@@ -225,8 +271,26 @@ class Deny(RailTest):
                         "cat <<EOF | sudo bash\ngh pr merge 5\nEOF", "echo $((1<<2))\ngit push -f origin main",
                         "echo $(git push -f origin main)", "echo `git push origin HEAD:main`",
                         'git commit -m "fix: $(git push -f origin main)"', 'echo "left open $(git push -f origin main',
-                        "echo start\ngit push --force origin main", "echo \"a\nb\"\ngh pr merge 5"):
+                        "echo start\ngit push --force origin main", "echo \"a\nb\"\ngh pr merge 5",
+                        "diff <(git push -f origin main) x"):
             self.assertEqual(decide(p, command, cloud=True), "deny", command)
+        # Nothing that only looks like a quote or a here-document hides the lines after it: an apostrophe or <<EOF
+        # in a comment, a shift in arithmetic, an escaped quote inside $'...'.
+        for denied in ("git push origin HEAD:main", "git push -f origin 7-work", "gh pr merge 5",
+                       "gh api -X PUT repos/{owner}/{repo}/pulls/5/merge"):
+            for command in (f"echo x # can't fail\n{denied}", f"# it's a comment\n{denied}",
+                            f"echo x # see <<EOF\n{denied}\nEOF", f"echo $((1<<EOF))\n{denied}\nEOF",
+                            f"((x = 1 << EOF))\n{denied}\nEOF", f"echo $'can\\'t'\n{denied}"):
+                self.assertEqual(decide(p, command, cloud=True), "deny", command)
+        # A # inside a word starts no comment: what follows on the line still runs.
+        for command in ("echo a#b && git push -f origin 7-work", "curl -s https://x/y#frag && gh pr merge 5",
+                        "echo $# ${#x} && git push origin HEAD:main"):
+            self.assertEqual(decide(p, command, cloud=True), "deny", command)
+        self.assertIsNone(decide(p, "echo a #b && git push -f origin main", cloud=True))  # a real comment
+        for command in ('git commit -m "fix #12: don\'t\n\ngit push -f origin main was wrong"',
+                        "git commit -m 'one' # then push", 'echo "$#" a#b ${#x}',
+                        "cat > notes.md <<'EOF'\n# it's a heading\ngit push -f origin main\nEOF"):
+            self.assertIsNone(decide(p, command, cloud=True), command)
 
     def test_the_owners_decision_on_a_finding_always_asks(self):
         # The flag first, or rail by path, would dodge a permission rule; an abbreviation would dodge both.

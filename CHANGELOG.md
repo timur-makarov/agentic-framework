@@ -95,3 +95,7 @@ One line for each change, saying why.
 - Let the session that reads a person's answer go on with the ticket: after a rail:go or an accept on a ticket that waited for a person, the run that recorded it left the ticket to the session that had claimed it, and with the label gone nothing resumed it for 30 minutes or more. A person's answer also no longer counts as a sign that the claiming session is alive.
 - List a ticket another session holds under held in next's answer also when a rail:go that answers no wait is on it.
 - Stop the guard judging every later push as this project's after a push from another repository to a local folder that is a repository: two flags shared one name.
+- Teach the guard's line reader shell comments, $'...' quoting, process substitution and arithmetic shifts: an apostrophe or <<EOF in a comment, or a shift written like a here-document, hid the lines after it from the guard.
+- Read GH_REPO= only as an assignment in front of a gh command, and believe an exported GH_REPO or GIT_DIR only when it points at this project: in an option's value, or exported and then unset, it made a merge of this project's pull request pass as another repository's.
+- Stop following a cd the shell may skip or run in a child: `true || cd OTHER && git push origin main` runs the push here.
+- Stop a # inside a word from hiding the rest of the line from the guard: `curl https://x/y#frag && git push origin HEAD:main` passed.
