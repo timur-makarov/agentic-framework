@@ -253,7 +253,8 @@ class Deny(RailTest):
                 yield command, shape.replace("{C}", command).replace("{A}", command[4:]).replace("{{", "{").replace("}}", "}")
 
     def judge(self, line):
-        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "engine"))
+        import railtest  # the engine the launcher under test runs: bin/rail in the framework, .rail/bin/rail in a project
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(railtest.RAIL))), "engine"))
         from rail import guard
         return guard.deny(line, "main", "7-work", cwd="/proj", locate=lambda d: (True, "7-work"), repo="acme/app", cloud=True)
 
