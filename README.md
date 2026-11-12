@@ -7,7 +7,7 @@ Code, on macOS and Linux, with Python 3.11 or newer.
 ## Install
 
 ```bash
-git clone https://github.com/timur-makarov/throw-away-repo ~/rail && ~/rail/install
+git clone https://github.com/timur-makarov/agentic-framework ~/rail && ~/rail/install
 ```
 
 `install` links `rail` into `~/.local/bin` and tells you if that folder isn't on your `PATH`. There is no
