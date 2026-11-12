@@ -821,6 +821,7 @@ Guards prevent mistakes; they are not a boundary.
 **Claude Code hooks:**
 
 - **Permission rules first.** The guard table is written as `permissions.deny` and `ask` rules in `.claude/settings.json` wherever a rule fits. Deny rules hold in every permission mode. Bash rules match the start of a command, so they fit paths and whole commands, such as `Read(./.env)` and `Bash(sudo *)`.
+- **Allow rules for the agent's verbs.** `rail next`, `advance`, `add`, `answer`, `amend`, `status`, `context`, `docs`, `doctor`, `intake`, `sweep` and `consult`, and `gh run watch`, are in `permissions.allow`. A matching allow rule is decided before any prompt and before auto mode's classifier, so neither stops the loop. The person's verbs (`accept`, `drop`, `init`) have no allow rule, and `rail answer ... --owner` is an `ask` rule, so it prompts in every mode.
 - **`guard`** (PreToolUse) is a small hook for what depends on a flag or a pipe anywhere in the command: force push (`-f`, `--force`, `+ref`), push to `base_branch`, `--no-verify`, merges outside the engine, `git reset --hard`, `git clean -f`, `rm -r` outside the worktree and `curl | sh`. Together, rules and hook cover this table:
   - **Deny:**
     - force push or direct push to `base_branch`;
@@ -1108,3 +1109,14 @@ What it found, and what changed:
 - **A check run from GitHub Actions has an empty output**, so a red check's brief would have said "no output". The engine now reads the failing step's output from the job's log.
 
 Where it stopped: **the setup pull request is the person's to merge** (section 14), and the guard holds the agent to that. The ticket lifecycle on GitHub (pull requests per ticket, CI, the engine's merge, parallel claims, resume, the rebase when behind) runs once the owner has merged it. "Behind" also needs the ruleset with up-to-date branches required, which only a person can make.
+
+### Auto mode and Rail
+
+Checked on 2026-11-12 in the cloud session (Claude Code 2.1.322), after the owner asked for auto mode to allow the commands Rail needs.
+
+- **Auto mode's rule lists can't be set from a repository.** Claude Code reads the `autoMode` setting from user settings, managed settings or a `--settings` flag only. `claude auto-mode config` in the cloud container confirmed it: a block in a user-level settings file showed up in the effective config, and the same block in a project's `.claude/settings.json` didn't. A cloud session reads no settings from the person's own machine, so in the cloud the block could only come from an organisation's managed settings, or from an environment setup script that writes `~/.claude/settings.json` in the VM. The second was not tried in a live session.
+- **Permission rules are decided first.** A command that matches an allow rule runs without the classifier seeing it; an `ask` rule prompts even in auto mode; a deny rule and the guard hook's deny hold over both.
+- **The force push never needed a setting.** The default rules call `--force-with-lease` "the sanctioned careful form" and treat a force push of the session's own branch as ordinary work. The Phase 0 refusal was a test that overwrote a commit another clone had pushed, which is what the rule is for. In Rail the engine makes these pushes inside `rail next` and `rail advance`, and the guard denies the agent's own.
+- **What the default rules would stop:** merging a pull request no person approved, starting a nested agent with approvals off, and widening the agent's own permissions unless the person names the change. The first is what `rail advance` does for `auto_tiers`, by the owner's policy.
+
+So the seed's settings now carry allow rules for the agent's verbs (section 15). That is the whole change: the classifier's own lists stay at their defaults.

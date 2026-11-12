@@ -59,7 +59,8 @@ class Init(RailTest):
         self.assertTrue(agents.startswith("# Project rules\n\nUse tabs.\n\n## Rail\n"), agents)
         self.assertEqual(read(p.path("CLAUDE.md")), "# Claude\n\nBe brief.\n\n@AGENTS.md\n")
         merged = json.loads(read(p.path(".claude/settings.json")))
-        self.assertEqual(merged["permissions"]["allow"], ["Bash(make test)"])
+        self.assertEqual(merged["permissions"]["allow"][0], "Bash(make test)")  # theirs stays, Rail's are added
+        self.assertIn("Bash(rail advance *)", merged["permissions"]["allow"])
         commands = [h["command"] for group in merged["hooks"]["SessionStart"] for h in group["hooks"]]
         self.assertEqual(commands[0], "echo mine")
         self.assertIn('"$CLAUDE_PROJECT_DIR"/.rail/bin/rail hook session-start', commands)

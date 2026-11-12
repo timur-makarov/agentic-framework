@@ -163,6 +163,15 @@ class Wiring(RailTest):
                 self.assertIn(f"{tool}(./**/{name})", settings["permissions"]["deny"])
         self.assertNotIn("Read(./**/.env.example)", settings["permissions"]["deny"])
         self.assertIn("Bash(sudo *)", settings["permissions"]["ask"])
+        # The agent's verbs run without asking; the person's have no allow rule, and --owner always asks.
+        allow = settings["permissions"]["allow"]
+        for verb in ("next", "advance", "add", "answer", "amend", "status", "intake", "sweep", "consult"):
+            self.assertIn(f"Bash(rail {verb} *)", allow)
+        for verb in ("accept", "drop", "init"):
+            self.assertFalse([rule for rule in allow if f"rail {verb}" in rule], verb)
+        self.assertFalse([rule for rule in allow if rule in ("Bash", "Bash(*)", "Bash(rail *)")])
+        self.assertIn("Bash(rail answer * --owner)", settings["permissions"]["ask"])
+        self.assertIn("Bash(rail answer * --owner *)", settings["permissions"]["ask"])
         self.assertEqual(settings["hooks"]["PreToolUse"][0]["matcher"], "Bash")
         self.assertIn("rail hook guard", settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"])
         found = {s["step"]: s for s in p.rail("doctor", expect=None)["steps"]}
