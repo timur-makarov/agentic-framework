@@ -44,6 +44,7 @@ an empty contract; `rail next` asks the agent to write it, and `rail amend NN --
 is idempotent by `external_id`.
 
 `add` takes the next ID, makes the branch `NN-slug`, and commits the ticket there without touching your
-checkout. With a remote, the ID is taken by pushing the branch `rail/id/NN`: if another clone took it
-first, the push is refused and `add` takes the next one. Without a remote, a folder in the git directory
-does the same. An ID is never reused.
+checkout. With a remote, the ID is taken by moving one counter branch, `rail/ids`, a commit forward: if
+another clone took the ID first, the push is refused and `add` takes the next one. Without a remote, a
+folder in the git directory does the same. An ID is never reused, and `rail/ids` is the only branch the
+IDs need, so leave it in place.

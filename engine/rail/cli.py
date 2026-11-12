@@ -298,7 +298,7 @@ def create_ticket(project, text):
                 files[events_path(nn)] = json.dumps(accepted, separators=(",", ":")) + "\n"
         return gitx.commit_files(project.root, base_tip, files, f"{nn}: add ticket: {ticket.title}")
 
-    nn, commit = project.take_id(project.max_id(tickets) + 1, build)
+    nn, commit = project.take_id(project.max_id(tickets) + 1, build, label=Ticket(text).title or "")
     branch = branch_name(Ticket(with_id(text, nn)))
     if not gitx.update_ref(project.root, f"refs/heads/{branch}", commit, None):
         raise RailError(f"branch {branch} already exists")
@@ -897,7 +897,7 @@ def cmd_status(project, args):
             note = action["brief"]
         if f.pr and not note:
             note = f"PR #{f.pr['number']}"
-        rows.append({"ticket": nn, "title": t.ticket.title if t.ticket else "", "state": f.state, "owner": owner,
+        rows.append({"ticket": nn, "title": t.ticket.title if t.ticket else t.label, "state": f.state, "owner": owner,
                      "tier": f.tier, "last_event": age(last), "branch": t.name, "note": note,
                      **({"pr": f.pr["html_url"]} if f.pr else {})})
         if f.state in ("merged", "dropped"):
@@ -1023,7 +1023,9 @@ def run_provision(project, run):
     import shlex
 
     command = project.config["commands"]["provision"]
-    as_root = command if os.geteuid() == 0 else f"sudo -n -E sh -c {shlex.quote(command)}"  # a CI runner isn't root
+    as_root = command
+    if os.geteuid() != 0 and subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode == 0:
+        as_root = f"sudo -n -E sh -c {shlex.quote(command)}"  # a CI runner isn't root, and its sudo asks no password
     code, output, ms = steps.run_shell(as_root, project.root, {"RAIL_BASE": project.base_ref},
                                        project.config["commands"]["timeout_secs"])
     passed = run.record("provision", code == 0, None, "timeout" if code is None else f"exit {code}", ms,

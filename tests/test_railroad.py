@@ -331,7 +331,11 @@ class Remote(RailTest):
 
         run_both(add_three)
         self.assertEqual(sorted(int(r["ticket"]) for r in results), [1, 2, 3, 4, 5, 6])
-        self.assertEqual(len(a.git("ls-remote", "origin", "refs/heads/rail/id/*").splitlines()), 6)
+        # One counter branch holds all six IDs: a cloud session can't delete branches, so there is none per ID.
+        self.assertEqual(a.git("ls-remote", "origin", "refs/heads/rail/*").split()[1::2], ["refs/heads/rail/ids"])
+        a.git("fetch", "--quiet")
+        self.assertEqual(a.git("log", "--format=%s", "origin/rail/ids").splitlines(),
+                         [f"rail id {n}" for n in (6, 5, 4, 3, 2, 1)])  # its own small chain, apart from the project
 
         claims = {}
         run_both(lambda fx: claims.update({fx.root: fx.rail("next", session=os.path.basename(fx.root))}))
@@ -344,7 +348,22 @@ class Remote(RailTest):
         b.git("config", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main")
         self.assertEqual(a.add(ticket())["ticket"], "1")
         self.assertEqual(b.add(ticket(title="Other", scope=("api/**",)))["ticket"], "2")
-        self.assertEqual(b.git("ls-remote", "origin", "refs/heads/rail/id/*").count("rail/id/"), 2)
+        self.assertEqual(b.git("ls-remote", "origin", "refs/heads/rail/*").count("refs/heads/rail/"), 1)
+
+    def test_a_project_with_the_old_branch_per_id_keeps_counting_from_them(self):
+        a, b = self.remote_pair()
+        a.git("push", "--quiet", "origin", "main:refs/heads/rail/id/7")  # as an engine before the counter left it
+        self.assertEqual(a.add(ticket())["ticket"], "8")
+        self.assertEqual(b.add(ticket(title="Other", scope=("api/**",)))["ticket"], "9")
+
+    def test_a_dropped_ticket_whose_branch_was_deleted_keeps_its_id_and_its_text(self):
+        a, b = self.remote_pair()
+        a.add(ticket())
+        a.rail("drop", "1", "--reason", "not needed")  # with a plain git remote the engine deletes the branch too
+        self.assertEqual(a.git("ls-remote", "origin", "refs/heads/1-*"), "")
+        row = b.rail("status")["tickets"][0]
+        self.assertEqual((row["ticket"], row["state"], row["title"]), ("1", "dropped", "Fix add"))
+        self.assertEqual(b.add(ticket(title="Other", scope=("api/**",)))["ticket"], "2")  # the ID is never reused
 
     def test_a_claim_made_offline_after_the_base_moved_still_reaches_the_remote(self):
         a, b = self.remote_pair()

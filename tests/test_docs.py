@@ -46,7 +46,7 @@ class Loop(RailTest):
         for text in ("rail next --json", "rail advance --json", "owner", "human_wait", "Exit codes"):
             self.assertIn(text, loop)
         tickets = p.rail("docs", "tickets")["text"]
-        for text in ("rail add", "Check:", "ASSUMED", "rail amend", "rail/id/NN"):
+        for text in ("rail add", "Check:", "ASSUMED", "rail amend", "rail/ids"):
             self.assertIn(text, tickets)
         states = p.rail("docs", "states")["text"]
         for state in ("new", "accepted", "implementing", "reviewing", "in-ci", "merge-ready", "merged", "dropped"):
