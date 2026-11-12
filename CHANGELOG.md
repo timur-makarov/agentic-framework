@@ -77,3 +77,4 @@ One line for each change, saying why.
 - Add the journal page to rail docs: the journal's files, every event and step, the stored review runs and what a reviewer returns.
 - Write the sign of life before a review run reads the head it resets the worktree to; written after, it left the branch behind its own pushed commit, and no later push went through.
 - Mark a drop in the counter branch too, so it outlives the ticket's branch: a dropped ticket whose contract had reached the base branch looked approved again once its branch was deleted.
+- Read a command that follows a shell keyword as that command: then git push -f, { cd -; ... } and ! git push were missed, because the guard looked only at the first word.
