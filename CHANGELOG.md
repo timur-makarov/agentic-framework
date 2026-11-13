@@ -110,3 +110,4 @@ One line for each change, saying why.
 - Judge a command the machine-level guard can't place on the branch the project's own checkout is on: from a folder above the repositories, `cd repo; git push` passed with the repository on its base branch.
 - Believe a cd only as a plain command in a flat chain: behind a keyword or in braces the shell may never run it (`if false; then cd OTHER && true; fi; git push -f origin x`), and one from the middle of an && chain holds only until that chain ends.
 - Treat $PWD, $HOME and ~ as unknown once a command sets PWD or HOME itself: `cd OTHER && PWD=HERE && cd $PWD && gh pr merge 5` ran here and passed as another repository's.
+- Let rail accept answer a wait when the rail:go label is already on the pull request: it stopped with "nothing waits for a person", because the table reads the label first.

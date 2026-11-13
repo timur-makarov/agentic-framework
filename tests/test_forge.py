@@ -193,6 +193,19 @@ class Approvals(RailTest):
         self.assertIn('A person said: "go on"', on["action"]["brief"])
         self.assertEqual([e["session"] for e in events(b) if e["event"] == "claimed"], ["run-1", "chat-2"])
 
+    def test_accept_works_with_the_go_label_already_on_the_pull_request(self):
+        # A person who labels the pull request and also says "accept" has answered once, not made a mistake.
+        a, b, github = self.github_pair()
+        a.add(ticket())
+        a.rail("next")
+        github.label(1, "rail:needs-you")
+        self.assertEqual(a.rail("next")["waits"][0]["needs"], "HOLD")
+        github.label(1, "rail:go")
+        on = a.rail("accept", "1", "go on")
+        self.assertEqual(on["reason"]["code"], "IMPLEMENT", on)
+        self.assertEqual(github.pr(1)["labels"], [])
+        self.assertEqual([e["via"] for e in events(a) if e["event"] == "continued"], ["accept"])
+
     def test_a_go_on_a_ticket_at_work_leaves_the_claim_alone(self):
         a, b, github = self.github_pair()
         a.add(ticket())
