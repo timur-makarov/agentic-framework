@@ -33,7 +33,10 @@ of the two it is on.
    the session's cloud environment and you approve once. They run `rail provision` when the environment's
    machine is built: it links `rail` onto `PATH`, writes Rail's hooks into the machine's own Claude Code
    settings, and runs the project's `provision` command. The result is kept as a snapshot, so later sessions
-   start with everything in place. A machine without it provisions itself on the first `rail next`.
+   start with everything in place. Without the script, `rail next` asks the agent to run `rail provision` when
+   the project has a `provision` command, since the checks need what it installs. Rail's own hooks reach the
+   machine that way only if the session lets the agent change its own settings; an auto mode session may
+   refuse that, so the script is the dependable way.
 
 `rail doctor` checks all of it and says what is left.
 

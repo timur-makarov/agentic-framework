@@ -120,6 +120,59 @@ class Save(RailTest):
         self.assertEqual(a.rail("save")["steps"][0]["detail"], "ticket 1: 1 files")
         self.assertNotEqual(github.head("1-fix-add"), head)
 
+    def test_a_rebase_stopped_in_the_worktree_is_the_agents_to_end(self):
+        # A ship that can't rebase cleanly tells the agent to rebase by hand. At a conflict the worktree has no
+        # branch checked out, and git moves the branch when the rebase ends: until then the engine only says so.
+        a, b = self.remote_pair()
+        a.add(ticket())
+        a.rail("next")
+        tree = a.worktree("1")
+        a.write("src/calc.py", "def add(a, b):\n    return a + b\n", base=tree)
+        a.git("commit", "--quiet", "-am", "1: mine", cwd=tree)
+        b.git("pull", "--quiet")
+        b.write("src/calc.py", "def add(a, b):\n    return b + a  # theirs\n")
+        b.git("commit", "--quiet", "-am", "theirs")
+        b.git("push", "--quiet", "origin", "main")
+        a.git("fetch", "--quiet")
+        stopped = subprocess.run(["git", "rebase", "origin/main"], cwd=tree, capture_output=True, text=True)
+        self.assertNotEqual(stopped.returncode, 0)  # a conflict
+        tip = a.git("rev-parse", "1-fix-add")
+        for args in (("next",), ("advance", "1"), ("next", "--ticket", "1")):
+            told = a.rail(*args)
+            self.assertEqual((told["owner"], told["reason"]["code"], told["cwd"]), ("agent", "REBASING", ".claude/worktrees/1"), args)
+            self.assertIn("git rebase --continue", told["action"]["brief"])
+        self.assertIn("a rebase is under way in its worktree", a.rail("save", "1")["action"]["brief"])
+        self.assertEqual((hook(a, "stop").returncode, hook(a, "pulse").stdout), (0, ""))
+        self.assertEqual(a.rail("status")["tickets"][0]["state"], "implementing")
+        self.assertEqual(a.rail("next", session="session-b")["reason"]["code"], "NO_WORK")  # fresh work of another session
+        self.assertEqual(a.git("rev-parse", "1-fix-add"), tip)  # nothing was written to the branch meanwhile
+        self.assertIn("UU src/calc.py", a.git("status", "--short", cwd=tree))  # and the conflict is as it was
+
+        a.write("src/calc.py", "def add(a, b):\n    return a + b\n", base=tree)
+        a.git("add", "src/calc.py", cwd=tree)
+        subprocess.run(["git", "-c", "core.editor=true", "rebase", "--continue"], cwd=tree, check=True, capture_output=True)
+        done = a.rail("advance", "1")
+        self.assertEqual(done["state"], "in-ci", done)  # it shipped
+
+    def test_a_rebase_given_up_leaves_the_ticket_as_it_was(self):
+        a, b = self.remote_pair()
+        a.add(ticket())
+        a.rail("next")
+        tree = a.worktree("1")
+        a.write("src/calc.py", "def add(a, b):\n    return a + b\n", base=tree)
+        a.git("commit", "--quiet", "-am", "1: mine", cwd=tree)
+        b.git("pull", "--quiet")
+        b.write("src/calc.py", "def add(a, b):\n    return b + a  # theirs\n")
+        b.git("commit", "--quiet", "-am", "theirs")
+        b.git("push", "--quiet", "origin", "main")
+        a.git("fetch", "--quiet")
+        subprocess.run(["git", "rebase", "origin/main"], cwd=tree, capture_output=True, text=True)
+        self.assertEqual(a.rail("next")["reason"]["code"], "REBASING")
+        a.git("rebase", "--abort", cwd=tree)
+        back = a.rail("next")
+        self.assertEqual((back["ticket"], back["owner"]), ("1", "agent"))
+        self.assertNotEqual(back["reason"]["code"], "REBASING")
+
     def test_a_save_leaves_out_files_whose_names_say_they_hold_secrets(self):
         # A save is pushed before verify, where the project's secret scan runs.
         a, b = self.remote_pair()

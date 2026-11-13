@@ -151,6 +151,30 @@ def worktrees(cwd):
     return found
 
 
+def rebasing(cwd):
+    """{branch name: worktree path} for every worktree stopped in the middle of a rebase. Its HEAD is detached
+    until the rebase ends, so `worktrees` doesn't list it; git keeps the name of the branch it is rebasing in the
+    worktree's own git folder."""
+    detached, path = [], None
+    for line in out(["worktree", "list", "--porcelain"], cwd).splitlines():
+        if line.startswith("worktree "):
+            path = line[len("worktree "):]
+        elif line == "detached":
+            detached.append(path)
+    found = {}
+    for path in detached:
+        folder = git(["rev-parse", "--path-format=absolute", "--git-dir"], path, check=False).stdout.strip()
+        for name in ("rebase-merge", "rebase-apply"):
+            try:
+                with open(os.path.join(folder, name, "head-name")) as f:
+                    head = f.read().strip()
+            except OSError:
+                continue
+            if head.startswith("refs/heads/"):
+                found[head[len("refs/heads/"):]] = path
+    return found
+
+
 def dirty(cwd, exclude=()):
     """Uncommitted paths in a worktree, untracked files included, as git names them (-z: no quoting, so a name
     may hold a quote or an arrow). A staged rename is both of its names: the old one is a deletion."""

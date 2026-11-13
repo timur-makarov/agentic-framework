@@ -108,7 +108,7 @@ def cloud_checks(project):
     done = provisioned(project)
     found.append(("provision", done, "this machine is provisioned: rail is linked, the machine's hooks are written,"
                                      " and [commands] provision ran" if done
-                  else "this machine isn't provisioned: run rail provision"))
+                  else "this machine isn't provisioned: the environment's setup script does it, or rail provision"))
     try:
         with open(os.path.join(os.path.expanduser("~"), ".claude", "settings.json")) as f:
             machine = "hook guard --machine" in f.read()
@@ -129,8 +129,9 @@ def cloud_checks(project):
                       "the repository's hooks didn't load in this session (it holds several repositories, or is a"
                       " project thread); the machine's hooks do their work" if machine else
                       "Rail's hooks didn't run in this session (it holds several repositories, or is a project"
-                      " thread), so the guard and the saves aren't active here: run rail provision, and until then"
-                      " GitHub's ruleset is the guard"))
+                      " thread), so the guard and the saves aren't active here. The environment's setup script puts"
+                      " them on the machine before a session starts (rail docs cloud); rail provision does it now if"
+                      " this session lets it. Until then GitHub's ruleset is the guard"))
     return found
 
 

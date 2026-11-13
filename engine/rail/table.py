@@ -171,6 +171,12 @@ ROWS = [
      lambda f: f"Ticket {f.id} is merged."),
     ("DROPPED",            "none",  "rest",        lambda f: f.state == "dropped",
      lambda f: f"Ticket {f.id} was dropped."),
+    # A rebase stopped in the ticket's worktree. Until it ends the engine writes nothing to the ticket: git moves
+    # the branch when the rebase finishes. Another session's fresh work is still left alone (CLAIMED_ELSEWHERE).
+    ("REBASING",           "agent", "agent_task",  lambda f: f.rebasing and f.state in OPEN and not (f.held and not f.explicit),
+     lambda f: f"A rebase is under way in {f.cwd} (ticket {f.id}, branch {f.t.branch}). Finish it there: resolve each"
+               f" conflicted file, git add it, then git rebase --continue. To give the rebase up: git rebase --abort."
+               f" Then run: rail advance {f.id}\nRail writes nothing to the ticket until the rebase has ended."),
     ("TICKET_LINT",        "agent", "agent_task",  lambda f: f.state == "new" and f.lint_errors,
      lambda f: f"Ticket {f.id} isn't complete: {'; '.join(f.lint_errors)}. Read it ({ticket_path(f.id)} on branch"
                f" {f.t.name}), write the whole ticket to a file with its Done Contract, tier and scope_paths, and run:"

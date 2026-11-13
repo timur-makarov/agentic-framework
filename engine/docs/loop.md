@@ -38,8 +38,8 @@ name says it holds secrets (`.env`, `*.pem`, `*.key`, an SSH key) and says so; t
 Saves carry `[skip ci]`; the commit a ship pushes is the one CI checks, so a save with no changed file
 leaves a shipped ticket's branch alone. A claim protects work in flight: a shipped ticket that came back
 (a red check, a review finding) has none until a file changes, so a session that only reads for
-`stale_minutes` may find the ticket taken over, and loses nothing by it. With GitHub reachable, `next` also takes in issues labelled
-`rail` and labels every wait `rail:needs-you`.
+`stale_minutes` may find the ticket taken over, and loses nothing by it. With GitHub reachable, `next`
+also takes in issues labelled `rail`, and every command that meets a wait labels it `rail:needs-you`.
 
 ## What advance does
 
@@ -51,6 +51,11 @@ worktree), as a squash commit on the base branch; other tiers
 wait for `rail accept NN` first. With a remote, every ticket has a pull request; once its required checks
 are green, `advance` merges an `auto_tiers` ticket through GitHub's async merge, and a person merges the
 rest. When only CI waits remain, `next` returns `gh run watch` for the run, then `rail next`.
+
+When the rebase meets a conflict, `advance` undoes it and asks you to rebase by hand. While that rebase is
+open in the worktree, `next`, `advance` and `save` only say how to end it (`REBASING`), and nothing is
+written to the ticket: git moves the branch when the rebase finishes, so a commit made meanwhile would be
+lost.
 
 ## Other verbs
 

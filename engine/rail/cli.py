@@ -328,7 +328,7 @@ def settle(project, nn, explicit):
             reran_setup = True
             continue
         if code not in TRANSITIONS:
-            if f.state in OPEN and f.forge and not f.pr_open and f.t.branch and not f.claimed_elsewhere:
+            if f.state in OPEN and f.forge and not f.pr_open and f.t.branch and not f.claimed_elsewhere and not f.rebasing:
                 # Its pull request was merged or lost before the work shipped: the ticket goes on, with a new one.
                 run = steps.Run(project, f.t)
                 if f.contract_merged:
@@ -919,6 +919,8 @@ def cmd_advance(project, args):
         f = facts[nn]
         f.explicit = True
         code, owner, _ = first_match(f)
+        if code == "REBASING":
+            return from_facts(f, receipts)  # nothing to ship while the rebase is open: the brief says how to end it
         mine = bool(f.worktree) and not f.claimed_elsewhere
         run = steps.Run(project, f.t)
         if f.state == "implementing" and mine and owner == "agent":
@@ -1143,6 +1145,11 @@ def save_all(project, via, only=None):
     for f in facts.values():
         if only and f.id != only:
             continue
+        if f.rebasing:
+            if only:
+                notes.append(f"Ticket {f.id}: a rebase is under way in its worktree, so nothing was saved. A commit"
+                             " made now would be lost when the rebase ends.")
+            continue
         if not (f.in_flight and f.claimed and f.worktree and f.ticket):
             if only:
                 notes.append(f"Ticket {f.id} is {f.state}: there is no work in flight to save here.")
@@ -1318,11 +1325,15 @@ def run_provision(project, run):
 
 
 def provision_task(project):
-    """In a cloud session, the first `next` on a machine that hasn't been provisioned says so."""
-    if not cloud() or provisioned(project):
+    """In a cloud session, `next` waits for the project's own provision command: the checks need what it installs.
+    Rail's own part, the link and the machine's hooks, is the environment's setup script's to do. A session may be
+    refused the change to its own settings, and work must not wait for that."""
+    if not cloud() or not project.config["commands"]["provision"] or provisioned(project):
         return None
+    brief = ("rail provision\nIt installs what this project's checks need ([commands] provision). If this session"
+             " refuses it, the environment's setup script runs it before a session starts: rail docs cloud")
     return answer(owner="agent", code="PROVISION", cwd=".",
-                  action={"kind": "script", "brief": "rail provision", "command": "rail provision"})
+                  action={"kind": "script", "brief": brief, "command": "rail provision"})
 
 
 def cmd_provision(project, args):

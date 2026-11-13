@@ -35,6 +35,7 @@ class Provision(RailTest):
         p = self.project()
         first = p.rail("next", cloud=True, env_extra=self.vm)
         self.assertEqual((first["reason"]["code"], first["action"]["command"]), ("PROVISION", "rail provision"))
+        self.assertIn("the environment's setup script runs it before a session starts", first["action"]["brief"])
         done = p.rail("provision", cloud=True, env_extra=self.vm)
         self.assertEqual((done["reason"]["code"], done["steps"][0]["result"]), ("PROVISIONED", "pass"))
         self.assertEqual(read(self.log), "ran\n")
@@ -124,7 +125,9 @@ class Machine(RailTest):
         os.makedirs(os.path.join(home, ".claude"))
         with open(os.path.join(home, ".claude", "settings.json"), "w") as f:
             json.dump({"modelSettings": {"x": 1}, "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo theirs"}]}]}}, f)
-        self.assertEqual(p.rail("next", cloud=True)["reason"]["code"], "PROVISION")  # even with no provision command
+        # With no provision command of the project's, next doesn't wait: Rail's own part is the setup script's to
+        # do, and a session may be refused the change to its own settings.
+        self.assertEqual(p.rail("next", cloud=True)["reason"]["code"], "NO_WORK")
         done = p.rail("provision", cloud=True)
         self.assertEqual([(s["step"], s["result"]) for s in done["steps"]], [("machine", "pass")])
         self.assertEqual(os.path.realpath(os.path.join(bin_dir, "rail")), os.path.realpath(p.path(".rail", "bin", "rail")))

@@ -147,6 +147,11 @@ class Facts:
         return self.t.worktree
 
     @property
+    def rebasing(self):
+        """The ticket's worktree is stopped in the middle of a rebase: only the agent there can end it."""
+        return bool(self.t.rebasing)
+
+    @property
     def cwd(self):
         return self.project.rel(self.t.worktree) if self.t.worktree else None
 

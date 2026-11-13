@@ -65,6 +65,7 @@ class TicketInfo:
         self.id_taken = False      # the ID is in the remote's counter branch, or the mkdir without a remote
         self.label = ""            # the title the ticket was added with, kept by the counter branch
         self.worktree = None
+        self.rebasing = False      # the worktree is stopped in the middle of a rebase
         self.on_base = False       # the ticket file is on the base branch
         self.dropped_mark = False  # the counter branch says the ticket was dropped: it outlives the ticket's branch
         self.remote_events = []    # the remote branch's journal, when it differs from the local branch's
@@ -158,12 +159,13 @@ class Project:
                 if m := re.match(r"\.rail/tickets/(\d+)\.md$", path):
                     info(m.group(1)).on_base = True
 
-        trees = gitx.worktrees(self.root)
+        trees, stopped = gitx.worktrees(self.root), gitx.rebasing(self.root)
         specs = []
         for nn, t in found.items():
             if t.branch:
                 t.ref = f"refs/heads/{t.branch}"
-                t.worktree = trees.get(t.branch)
+                t.worktree = trees.get(t.branch) or stopped.get(t.branch)
+                t.rebasing = t.branch in stopped
             elif t.remote_branch:
                 t.ref = f"refs/remotes/{self.remote}/{t.remote_branch}"
             source = t.ref or base
@@ -298,6 +300,12 @@ class Project:
         """Commit events (and whole journal files such as NN-review.json) to the ticket branch, without touching any
         checkout, then push. Returns the push result: 'ok', 'rejected' or 'unavailable'.
         """
+        if getattr(t, "rebasing", False):
+            # git moves the branch to the rebased commits when the rebase ends: a commit added to it now would be
+            # lost, or would stop the rebase from finishing.
+            raise RailError(f"ticket {t.id}'s worktree ({self.rel(t.worktree)}) is in the middle of a rebase. Finish it"
+                            " there (git rebase --continue) or give it up (git rebase --abort), then run this again.",
+                            code="REBASING")
         path = events_path(t.id)
         ref = f"refs/heads/{t.branch}"
         old = gitx.rev(ref, self.root)
