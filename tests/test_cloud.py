@@ -192,6 +192,17 @@ class Machine(RailTest):
                         "cd proj; git merge 9-x", "cd proj && git push", "cd proj && git merge 9-x"):
             self.assertEqual(self.decide(p, command, work), "deny", command)
 
+    def test_the_guard_covers_a_repository_the_command_names_from_further_above(self):
+        top = os.path.join(self.tmp, "m")
+        os.makedirs(os.path.join(top, "work"))
+        p = Fixture(os.path.join(top, "work", "repo"))
+        p.rail("provision", cloud=True)
+        for command in ("cd work/repo && git push origin main", f"cd {p.root} && git push -f origin 7-work",
+                        "git -C work/repo push origin main", "cd work/repo && gh pr merge 3"):
+            self.assertEqual(self.decide(p, command, top), "deny", command)
+        for command in ("cd work && ls", "cd work/repo && git push origin 7-work", "git push origin main"):
+            self.assertIsNone(self.decide(p, command, top), command)
+
     def test_where_the_repositorys_own_hooks_ran_the_machines_step_aside(self):
         p = self.fixture()
         p.rail("provision", cloud=True)

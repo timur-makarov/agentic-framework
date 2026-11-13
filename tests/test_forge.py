@@ -143,6 +143,7 @@ class Approvals(RailTest):
         github.ci("3-change-the-config", "success")
         ready = a.rail("next")
         self.assertEqual((ready["owner"], ready["waits"][0]["needs"]), ("human", "MERGE_BY_PERSON"))
+        self.assertIn("rail:needs-you", github.pr(1)["labels"])
         self.assertEqual(github.pr(1)["title"], "3: change the config")
         github.person_merges(1)
         self.assertEqual(a.rail("next")["reason"]["code"], "NO_WORK")
@@ -377,6 +378,8 @@ class Desk(RailTest):
         self.assertEqual((waiting["owner"], waiting["reason"]["code"]), ("human", "APPROVE_CONTRACT"))
         self.assertEqual(github.pr(1)["title"], "1: [contract] Rework the config")
         self.assertIn("pull/1", waiting["action"]["brief"])
+        # The person's inbox is the label: the command that meets the wait puts it on, not only a bare rail next.
+        self.assertEqual(github.pr(1)["labels"], ["rail:needs-you"])
 
     def test_an_issue_labelled_rail_comes_in_with_the_next_rail_next(self):
         a, b, github = self.github_pair()

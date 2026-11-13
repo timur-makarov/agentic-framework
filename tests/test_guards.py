@@ -248,6 +248,21 @@ class Deny(RailTest):
                         "gh api -X PUT repos/someone/else/pulls/3/merge -f commit_title=done",
                         "gh api -X PUT /repos/someone/else/pulls/3/merge-async"):
             self.assertIsNone(decide(a, command), command)
+        # A name counts only spelled plainly and in its place: gh decodes %2D, reads github.com/o/x with no scheme as
+        # a branch here, and hands -R to an option before it that takes a value.
+        for command in ("gh pr merge https://github.com/acme/ap%70/pull/5", "gh pr merge github.com/someone/else",
+                        "gh pr merge 5 -R https://github.com/acme/ap%70", "gh pr merge 5 --body --repo=someone/else",
+                        "gh pr merge -t -R feature/x", "gh pr merge 5 -R someone/else --unknown-option x",
+                        "gh pr merge 5 6 -R someone/else", "gh api -X PUT repos/{owner}/{repo}/pulls/5/ccr/auto_merge",
+                        f"cd {other} && gh api -X PUT repositories/42/pulls/5/merge",
+                        f"cd {other} && gh pr merge https://github.com/acme/ap%70/pull/5",
+                        f"cd {other} && gh pr merge 5 -R $O/app"):
+            self.assertEqual(decide(a, command), "deny", command)
+        for command in ("gh pr merge 3 -R someone/else --squash --delete-branch", "gh pr merge https://github.com/someone/else/pull/3 -sd",
+                        'gh pr merge 3 --repo=someone/else --body "done"', "gh -R github.com/someone/else pr merge 3",
+                        f"cd {other} && gh pr merge 5 --body --repo=acme/ap", f"cd {other} && gh pr merge feature/x -sd",
+                        "gh api -X PUT repos/someone/else/pulls/3/ccr/auto_merge"):
+            self.assertIsNone(decide(a, command), command)
         # It is another repository's only when every word that names one agrees and nothing points here.
         for command in ("GH_REPO=someone/else GH_REPO= gh pr merge 5", "GH_REPO=someone/else GH_REPO=acme/app gh pr merge 5",
                         "GH_REPO=someone/else gh pr merge --squash https://github.com/acme/app/pull/5",
