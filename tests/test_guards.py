@@ -525,6 +525,14 @@ class DenyMore(RailTest):
         for command in ("rm -rf build", "dd if=a of=b", "rm ~/notes.txt", "dd if=big.img of=/dev/null bs=1M"):
             self.assertIsNone(decide(p, command), command)
 
+    def test_the_engines_notes_under_the_git_folder_are_its_own_to_write(self):
+        p = self.fixture()
+        for command in ("echo 1 > .git/rail/cache/hooks/session-a", "mkdir -p x && touch repo/.git/rail/cache/hooks/s1",
+                        "cp /dev/null .git/rail/cache/merge/3", "tee .git/rail/cache/hooks/s1 < /dev/null"):
+            self.assertEqual(decide(p, command, cloud=True), "deny", command)
+        for command in ("cat .git/rail/cache/hooks/session-a", "ls .git/rail/cache", "mkdir -p .git/rail/cache/hooks"):
+            self.assertIsNone(decide(p, command, cloud=True), command)
+
     def test_secret_files_and_journal_writes_through_bash_are_denied(self):
         p = self.fixture()
         for command in ("cat .env", "echo TOKEN=x >> .env", "cp .env.example .env.local", "source config/.env",

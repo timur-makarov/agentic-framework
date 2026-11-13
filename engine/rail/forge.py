@@ -192,7 +192,12 @@ class Forge:
             self._pulls = {}
             try:
                 for pr in self.call("GET", "pulls?state=all&per_page=100&sort=created&direction=desc") or []:
-                    self._pulls.setdefault(pr["head"]["ref"], pr)
+                    head = pr["head"]
+                    if "repo" in head and ((head["repo"] or {}).get("full_name") or "").lower() != self.repo.lower():
+                        # From a fork: anyone can name a branch there like a ticket's. Its pull request is not
+                        # the ticket's, and what is written on it is not the owner's word.
+                        continue
+                    self._pulls.setdefault(head["ref"], pr)
             except ForgeError:
                 self.ok = False
         return self._pulls

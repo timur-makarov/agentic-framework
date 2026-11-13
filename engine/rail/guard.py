@@ -429,8 +429,13 @@ def _wipes_disk(words):
 
 
 def _journal_writes(words):
-    """The .rail/journal paths a command writes: redirect targets, and the files rm, mv, cp, tee, truncate,
-    sed -i and dd of= change."""
+    """The .rail/journal paths a command writes."""
+    return [t for t in _written(words) if ".rail/journal" in t]
+
+
+def _written(words):
+    """The paths a command writes: redirect targets, and the files rm, mv, cp, tee, truncate, touch, sed -i and
+    dd of= change."""
     targets = [words[i + 1] for i, w in enumerate(words[:-1]) if w in WRITE_REDIRECTS]
     redirected = {i + 1 for i, w in enumerate(words[:-1]) if w in WRITE_REDIRECTS or w in ("<", "<<", "<<<")}
     cmd = words[0]
@@ -444,7 +449,7 @@ def _journal_writes(words):
         targets.append(args[-1])
     elif cmd == "dd":
         targets += [w[3:] for w in words[1:] if w.startswith("of=")]
-    return [t for t in targets if ".rail/journal" in t]
+    return targets
 
 
 GH_API_VALUED = {"-X", "--method", "-H", "--header", "-f", "--raw-field", "-F", "--field", "--input", "-q", "--jq",
@@ -605,6 +610,9 @@ def _deny(line, base, branch, cwd=None, locate=None, repo=None, cloud=False):
                     f" ({', '.join(sorted(SAFE_ENV))} are fine)")
         if _journal_writes(words):
             return "only the engine writes .rail/journal/; record a finding's answer with rail answer"
+        if any("rail/cache" in target for target in _written(words)):
+            # Among them: which hooks ran in a session. Written by hand, it would make the machine's guard step aside.
+            return "only the engine writes its notes under .git/rail/cache"
         if words[0] in ("cd", "pushd", "popd"):
             moved = True
             if first:  # as written only: a cd is believed when it is plain

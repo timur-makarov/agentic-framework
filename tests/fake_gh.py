@@ -28,7 +28,7 @@ def pr_view(state, pr):
     view = dict(pr)
     view["labels"] = [{"name": n} for n in pr["labels"]]
     sha = pr.get("frozen_sha") or head_sha(state, pr["head"])
-    view["head"] = {"ref": pr["head"], "sha": sha}
+    view["head"] = {"ref": pr["head"], "sha": sha, "repo": {"full_name": pr.get("fork") or state["repo"]}}
     view["base"] = {"ref": pr["base"]}
     view["html_url"] = f"https://github.com/{state['repo']}/pull/{pr['number']}"
     if pr["state"] == "open" and sha:
